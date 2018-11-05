@@ -1,8 +1,10 @@
-* Upgrading to minio release RELEASE.2018-10-25T01-27-03Z
 ## Current Release 
+### 0.8.0 
+**Release Date:** Mon Nov  5 14:38:52 UTC 2018     
+## Previous Releases 
+* Upgrading to minio release RELEASE.2018-10-25T01-27-03Z
 ### 0.2.0 
 **Release Date:** Fri Aug 31 19:33:18 UTC 2018     
-## Previous Releases 
 ### 0.1.0 
 **Release Date:** Fri Aug 31 19:18:15 UTC 2018     
 * Feature - Adding Accedian circle-ci, Changelog and Makefile changes
