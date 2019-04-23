@@ -1,3 +1,5 @@
+**Using OPA is optional with Minio. We recommend using [`policy` JWT claims](https://github.com/minio/minio/blob/master/docs/sts/wso2.md#4-jwt-claims) instead, let Minio manage your policies using `mc admin policy` and apply them on the STS credentials.**
+
 # OPA Quickstart Guide [![Slack](https://slack.minio.io/slack?type=svg)](https://slack.minio.io)
 OPA is a lightweight general-purpose policy engine that can be co-located with Minio server, in this document we talk about how to use OPA HTTP API to authorize Minio STS credentials.
 
@@ -67,7 +69,7 @@ minio server /mnt/data
 ### 5. Test with Minio STS API
 Assuming that Minio server is configured to support STS API by following the doc [Minio STS Quickstart Guide](https://docs.minio.io/docs/minio-sts-quickstart-guide), execute the following command to temporary credentials from Minio server.
 ```
-go run full-example.go -cid PoEgXP6uVO45IsENRngDXj5Au5Ya -csec eKsw6z8CtOJVBtrOWvhRWL4TUCga
+go run client-grants.go -cid PoEgXP6uVO45IsENRngDXj5Au5Ya -csec eKsw6z8CtOJVBtrOWvhRWL4TUCga
 
 ##### Credentials
 {

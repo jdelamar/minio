@@ -36,7 +36,7 @@ func mustGetRequestID(t time.Time) string {
 
 // Write http common headers
 func setCommonHeaders(w http.ResponseWriter) {
-	w.Header().Set("Server", globalServerUserAgent)
+	w.Header().Set("Server", "Minio/"+ReleaseTag)
 	// Set `x-amz-bucket-region` only if region is set on the server
 	// by default minio uses an empty region.
 	if region := globalServerConfig.GetRegion(); region != "" {
@@ -87,6 +87,9 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 		w.Header().Set("Content-Encoding", objInfo.ContentEncoding)
 	}
 
+	if !objInfo.Expires.IsZero() {
+		w.Header().Set("Expires", objInfo.Expires.UTC().Format(http.TimeFormat))
+	}
 	// Set all other user defined metadata.
 	for k, v := range objInfo.UserDefined {
 		if hasPrefix(k, ReservedMetadataPrefix) {

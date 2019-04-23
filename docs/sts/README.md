@@ -11,28 +11,31 @@ Following are advantages for using temporary credentials:
 - Temporary credentials have a limited lifetime, there is no need to rotate them or explicitly revoke them. Expired temporary credentials cannot be reused.
 
 ## Identity Federation
-[**Client grants**](https://github.com/minio/minio/blob/master/docs/sts/client-grants.md) - Let applications request `client_grants` using any well-known third party identity provider such as KeyCloak, WSO2. This is known as the client grants approach to temporary access. Using this approach helps clients keep Minio credentials to be secured. Minio STS supports client grants, tested against identity providers such as WSO2, KeyCloak.
+- [**Client grants**](https://github.com/minio/minio/blob/master/docs/sts/client-grants.md) - Let applications request `client_grants` using any well-known third party identity provider such as KeyCloak, WSO2. This is known as the client grants approach to temporary access. Using this approach helps clients keep Minio credentials to be secured. Minio STS supports client grants, tested against identity providers such as WSO2, KeyCloak.
+- [**WebIdentity**](https://github.com/minio/minio/blob/master/docs/sts/web-identity.md) - Let users request temporary credentials using any OpenID(OIDC) compatible web identity providers such as Facebook, Google etc.
+- [**AssumeRole**](https://github.com/minio/minio/blob/master/docs/sts/assume-role.md) - Let Minio users request temporary credentials using user access and secret keys.
 
 ## Get started
 In this document we will explain in detail on how to configure all the prerequisites, primarily WSO2, OPA (open policy agent).
 
+> NOTE: If you are interested in AssumeRole API only, skip to [here](https://github.com/minio/minio/blob/master/docs/sts/assume-role.md)
+
 ### 1. Prerequisites
 - [Configuring wso2](https://github.com/minio/minio/blob/master/docs/sts/wso2.md)
-- [Configuring opa](https://github.com/minio/minio/blob/master/docs/sts/opa.md)
+- [Configuring opa (optional)](https://github.com/minio/minio/blob/master/docs/sts/opa.md)
 - [Configuring etcd (optional needed only in gateway or federation mode)](https://github.com/minio/minio/blob/master/docs/sts/etcd.md)
 
-### 2. Setup Minio with WSO2, OPA
+### 2. Setup Minio with WSO2
 Make sure we have followed the previous step and configured each software independently, once done we can now proceed to use Minio STS API and Minio server to use these credentials to perform object API operations.
 
 ```
 export MINIO_ACCESS_KEY=minio
 export MINIO_SECRET_KEY=minio123
 export MINIO_IAM_JWKS_URL=https://localhost:9443/oauth2/jwks
-export MINIO_IAM_OPA_URL=http://localhost:8181/v1/data/httpapi/authz
 minio server /mnt/data
 ```
 
-### 3. Setup Minio Gateway with WSO2, OPA, ETCD
+### 3. Setup Minio Gateway with WSO2, ETCD
 Make sure we have followed the previous step and configured each software independently, once done we can now proceed to use Minio STS API and Minio gateway to use these credentials to perform object API operations.
 
 > NOTE: Minio gateway requires etcd to be configured to use STS API.
@@ -41,16 +44,15 @@ Make sure we have followed the previous step and configured each software indepe
 export MINIO_ACCESS_KEY=aws_access_key
 export MINIO_SECRET_KEY=aws_secret_key
 export MINIO_IAM_JWKS_URL=https://localhost:9443/oauth2/jwks
-export MINIO_IAM_OPA_URL=http://localhost:8181/v1/data/httpapi/authz
 export MINIO_ETCD_ENDPOINTS=http://localhost:2379
 minio gateway s3
 ```
 
-### 4. Test using full-example.go
-On another terminal run `full-example.go` a sample client application which obtains JWT access tokens from an identity provider, in our case its WSO2. Uses the returned access token response to get new temporary credentials from the Minio server using the STS API call `AssumeRoleWithClientGrants`.
+### 4. Test using client-grants.go
+On another terminal run `client-grants.go` a sample client application which obtains JWT access tokens from an identity provider, in our case its WSO2. Uses the returned access token response to get new temporary credentials from the Minio server using the STS API call `AssumeRoleWithClientGrants`.
 
 ```
-go run full-example.go -cid PoEgXP6uVO45IsENRngDXj5Au5Ya -csec eKsw6z8CtOJVBtrOWvhRWL4TUCga
+go run client-grants.go -cid PoEgXP6uVO45IsENRngDXj5Au5Ya -csec eKsw6z8CtOJVBtrOWvhRWL4TUCga
 
 ##### Credentials
 {
