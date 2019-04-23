@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ func TestServerConfigMigrateV1(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(rootPath)
-	setConfigDir(rootPath)
+	globalConfigDir = &ConfigDir{path: rootPath}
 
 	globalObjLayerMutex.Lock()
 	globalObjectAPI = objLayer
@@ -77,7 +77,7 @@ func TestServerConfigMigrateInexistentConfig(t *testing.T) {
 	}
 	defer os.RemoveAll(rootPath)
 
-	setConfigDir(rootPath)
+	globalConfigDir = &ConfigDir{path: rootPath}
 
 	if err := migrateV2ToV3(); err != nil {
 		t.Fatal("migrate v2 to v3 should succeed when no config file is found")
@@ -159,14 +159,15 @@ func TestServerConfigMigrateInexistentConfig(t *testing.T) {
 	}
 }
 
-// Test if a config migration from v2 to v28 is successfully done
-func TestServerConfigMigrateV2toV28(t *testing.T) {
+// Test if a config migration from v2 to v33 is successfully done
+func TestServerConfigMigrateV2toV33(t *testing.T) {
 	rootPath, err := ioutil.TempDir(globalTestTmpDir, "minio-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(rootPath)
-	setConfigDir(rootPath)
+
+	globalConfigDir = &ConfigDir{path: rootPath}
 
 	objLayer, fsDir, err := prepareFS()
 	if err != nil {
@@ -203,6 +204,10 @@ func TestServerConfigMigrateV2toV28(t *testing.T) {
 		t.Fatal("Unexpected error: ", err)
 	}
 
+	if err := migrateMinioSysConfig(objLayer); err != nil {
+		t.Fatal("Unexpected error: ", err)
+	}
+
 	// Initialize server config and check again if everything is fine
 	if err := loadConfig(objLayer); err != nil {
 		t.Fatalf("Unable to initialize from updated config file %s", err)
@@ -218,6 +223,7 @@ func TestServerConfigMigrateV2toV28(t *testing.T) {
 	if globalServerConfig.Credential.AccessKey != accessKey {
 		t.Fatalf("Access key lost during migration, expected: %v, found:%v", accessKey, globalServerConfig.Credential.AccessKey)
 	}
+
 	if globalServerConfig.Credential.SecretKey != secretKey {
 		t.Fatalf("Secret key lost during migration, expected: %v, found: %v", secretKey, globalServerConfig.Credential.SecretKey)
 	}
@@ -230,7 +236,8 @@ func TestServerConfigMigrateFaultyConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(rootPath)
-	setConfigDir(rootPath)
+
+	globalConfigDir = &ConfigDir{path: rootPath}
 	configPath := rootPath + "/" + minioConfigFile
 
 	// Create a corrupted config file
@@ -314,7 +321,6 @@ func TestServerConfigMigrateFaultyConfig(t *testing.T) {
 	if err := migrateV26ToV27(); err == nil {
 		t.Fatal("migrateConfigV26ToV27() should fail with a corrupted json")
 	}
-
 	if err := migrateV27ToV28(); err == nil {
 		t.Fatal("migrateConfigV27ToV28() should fail with a corrupted json")
 	}
@@ -327,7 +333,8 @@ func TestServerConfigMigrateCorruptedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(rootPath)
-	setConfigDir(rootPath)
+
+	globalConfigDir = &ConfigDir{path: rootPath}
 	configPath := rootPath + "/" + minioConfigFile
 
 	for i := 3; i <= 17; i++ {

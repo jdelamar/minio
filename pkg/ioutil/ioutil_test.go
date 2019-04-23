@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package ioutil
 
 import (
+	"bytes"
+	"io"
 	goioutil "io/ioutil"
 	"os"
 	"testing"
@@ -71,5 +73,31 @@ func TestAppendFile(t *testing.T) {
 	expected := "aaaaaaaaaabbbbbbbbbb"
 	if string(b) != expected {
 		t.Errorf("AppendFile() failed, expected: %s, got %s", expected, string(b))
+	}
+}
+
+func TestSkipReader(t *testing.T) {
+	testCases := []struct {
+		src      io.Reader
+		skipLen  int64
+		expected string
+	}{
+		{bytes.NewBuffer([]byte("")), 0, ""},
+		{bytes.NewBuffer([]byte("")), 1, ""},
+		{bytes.NewBuffer([]byte("abc")), 0, "abc"},
+		{bytes.NewBuffer([]byte("abc")), 1, "bc"},
+		{bytes.NewBuffer([]byte("abc")), 2, "c"},
+		{bytes.NewBuffer([]byte("abc")), 3, ""},
+		{bytes.NewBuffer([]byte("abc")), 4, ""},
+	}
+	for i, testCase := range testCases {
+		r := NewSkipReader(testCase.src, testCase.skipLen)
+		b, err := goioutil.ReadAll(r)
+		if err != nil {
+			t.Errorf("Case %d: Unexpected err %v", i, err)
+		}
+		if string(b) != testCase.expected {
+			t.Errorf("Case %d: Got wrong result: %v", i, string(b))
+		}
 	}
 }

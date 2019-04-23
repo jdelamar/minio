@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,6 +49,13 @@ export default (
         list: action.objects,
         marker: action.marker,
         isTruncated: action.isTruncated
+      }
+    case actionsObjects.RESET_LIST:
+      return {
+        ...state,
+        list: [],
+        marker: "",
+        isTruncated: false
       }
     case actionsObjects.APPEND_LIST:
       return {

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,18 +56,21 @@ func LivenessCheckHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s := objLayer.StorageInfo(ctx)
-	// Gateways don't provide disk info
-	if s.Backend.Type == Unknown {
-		// ListBuckets to confirm gateway backend is up
-		if _, err := objLayer.ListBuckets(ctx); err != nil {
-			writeResponse(w, http.StatusServiceUnavailable, nil, mimeNone)
+	if !globalIsXL && !globalIsDistXL {
+		s := objLayer.StorageInfo(ctx)
+		// Gateways don't provide disk info.
+		if s.Backend.Type == Unknown {
+			// ListBuckets to confirm gateway backend is up
+			if _, err := objLayer.ListBuckets(ctx); err != nil {
+				writeResponse(w, http.StatusServiceUnavailable, nil, mimeNone)
+				return
+			}
+			writeResponse(w, http.StatusOK, nil, mimeNone)
 			return
 		}
-		writeResponse(w, http.StatusOK, nil, mimeNone)
-		return
 	}
 
+	// For FS and Erasure backend, check if local disks are up.
 	var totalLocalDisks int
 	var erroredDisks int
 	for _, endpoint := range globalEndpoints {
@@ -84,6 +87,7 @@ func LivenessCheckHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
 	// If all exported local disks have errored, we simply let kubernetes
 	// take us down.
 	if totalLocalDisks == erroredDisks {

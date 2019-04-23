@@ -1,4 +1,4 @@
-// Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+// MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -42,6 +42,10 @@ var (
 	// ErrInvalidCustomerKey indicates that the SSE-C client key is not valid - e.g. not a
 	// base64-encoded string or not 256 bits long.
 	ErrInvalidCustomerKey = errors.New("The SSE-C client key is invalid")
+
+	// ErrSecretKeyMismatch indicates that the provided secret key (SSE-C client key / SSE-S3 KMS key)
+	// does not match the secret key used during encrypting the object.
+	ErrSecretKeyMismatch = errors.New("The secret key does not match the secret key used during upload")
 
 	// ErrCustomerKeyMD5Mismatch indicates that the SSE-C key MD5 does not match the
 	// computed MD5 sum. This means that the client provided either the wrong key for

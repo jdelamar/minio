@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 package nas
 
 import (
+	"context"
+
 	"github.com/minio/cli"
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/pkg/auth"
@@ -48,7 +50,7 @@ ENVIRONMENT VARIABLES:
      MINIO_BROWSER: To disable web browser access, set this value to "off".
 
   DOMAIN:
-     MINIO_DOMAIN: To enable virtual-host-style requests, set this value to Minio host domain name.
+     MINIO_DOMAIN: To enable virtual-host-style requests, set this value to MinIO host domain name.
 
   CACHE:
      MINIO_CACHE_DRIVES: List of mounted drives or directories delimited by ";".
@@ -74,7 +76,7 @@ EXAMPLES:
 
 	minio.RegisterGatewayCommand(cli.Command{
 		Name:               nasBackend,
-		Usage:              "Network-attached storage (NAS).",
+		Usage:              "Network-attached storage (NAS)",
 		Action:             nasGatewayMain,
 		CustomHelpTemplate: nasGatewayTemplate,
 		HideHelpCommand:    true,
@@ -108,7 +110,7 @@ func (g *NAS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	if err != nil {
 		return nil, err
 	}
-	return &nasObjects{newObject.(*minio.FSObjects)}, nil
+	return &nasObjects{newObject}, nil
 }
 
 // Production - nas gateway is production ready.
@@ -116,12 +118,18 @@ func (g *NAS) Production() bool {
 	return true
 }
 
-// nasObjects implements gateway for Minio and S3 compatible object storage servers.
-type nasObjects struct {
-	*minio.FSObjects
+// IsListenBucketSupported returns whether listen bucket notification is applicable for this gateway.
+func (n *nasObjects) IsListenBucketSupported() bool {
+	return false
 }
 
-// IsNotificationSupported returns whether notifications are applicable for this layer.
-func (l *nasObjects) IsNotificationSupported() bool {
-	return false
+func (n *nasObjects) StorageInfo(ctx context.Context) minio.StorageInfo {
+	sinfo := n.ObjectLayer.StorageInfo(ctx)
+	sinfo.Backend.Type = minio.Unknown
+	return sinfo
+}
+
+// nasObjects implements gateway for MinIO and S3 compatible object storage servers.
+type nasObjects struct {
+	minio.ObjectLayer
 }

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http"
 	"path"
 	"sort"
 	"sync"
@@ -31,17 +32,18 @@ import (
 
 const erasureAlgorithmKlauspost = "klauspost/reedsolomon/vandermonde"
 
-// objectPartInfo Info of each part kept in the multipart metadata
+// ObjectPartInfo Info of each part kept in the multipart metadata
 // file after CompleteMultipartUpload() is called.
-type objectPartInfo struct {
-	Number int    `json:"number"`
-	Name   string `json:"name"`
-	ETag   string `json:"etag"`
-	Size   int64  `json:"size"`
+type ObjectPartInfo struct {
+	Number     int    `json:"number"`
+	Name       string `json:"name"`
+	ETag       string `json:"etag"`
+	Size       int64  `json:"size"`
+	ActualSize int64  `json:"actualSize"`
 }
 
 // byObjectPartNumber is a collection satisfying sort.Interface.
-type byObjectPartNumber []objectPartInfo
+type byObjectPartNumber []ObjectPartInfo
 
 func (t byObjectPartNumber) Len() int           { return len(t) }
 func (t byObjectPartNumber) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
@@ -57,7 +59,7 @@ type ChecksumInfo struct {
 type checksumInfoJSON struct {
 	Name      string `json:"name"`
 	Algorithm string `json:"algorithm"`
-	Hash      string `json:"hash"`
+	Hash      string `json:"hash,omitempty"`
 }
 
 // MarshalJSON marshals the ChecksumInfo struct
@@ -145,14 +147,14 @@ type xlMetaV1 struct {
 	Stat    statInfo `json:"stat"`    // Stat of the current object `xl.json`.
 	// Erasure coded info for the current object `xl.json`.
 	Erasure ErasureInfo `json:"erasure"`
-	// Minio release tag for current object `xl.json`.
+	// MinIO release tag for current object `xl.json`.
 	Minio struct {
 		Release string `json:"release"`
 	} `json:"minio"`
 	// Metadata map for current object `xl.json`.
 	Meta map[string]string `json:"meta,omitempty"`
 	// Captures all the individual object `xl.json`.
-	Parts []objectPartInfo `json:"parts,omitempty"`
+	Parts []ObjectPartInfo `json:"parts,omitempty"`
 }
 
 // XL metadata constants.
@@ -182,6 +184,15 @@ func newXLMetaV1(object string, dataBlocks, parityBlocks int) (xlMeta xlMetaV1) 
 		BlockSize:    blockSizeV1,
 		Distribution: hashOrder(object, dataBlocks+parityBlocks),
 	}
+	return xlMeta
+}
+
+// Return a new xlMetaV1 initialized using the given xlMetaV1. Used in healing to make sure that we do not copy
+// over any part's checksum info which will differ for different disks.
+func newXLMetaFromXLMeta(meta xlMetaV1) xlMetaV1 {
+	xlMeta := meta
+	xlMeta.Erasure.Checksums = nil
+	xlMeta.Parts = nil
 	return xlMeta
 }
 
@@ -216,6 +227,17 @@ func (m xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
 		ContentType:     m.Meta["content-type"],
 		ContentEncoding: m.Meta["content-encoding"],
 	}
+	// Update expires
+	var (
+		t time.Time
+		e error
+	)
+	if exp, ok := m.Meta["expires"]; ok {
+		if t, e = time.Parse(http.TimeFormat, exp); e == nil {
+			objInfo.Expires = t.UTC()
+		}
+	}
+	objInfo.backendType = BackendErasure
 
 	// Extract etag from metadata.
 	objInfo.ETag = extractETag(m.Meta)
@@ -240,7 +262,7 @@ func (m xlMetaV1) ToObjectInfo(bucket, object string) ObjectInfo {
 }
 
 // objectPartIndex - returns the index of matching object part number.
-func objectPartIndex(parts []objectPartInfo, partNumber int) int {
+func objectPartIndex(parts []ObjectPartInfo, partNumber int) int {
 	for i, part := range parts {
 		if partNumber == part.Number {
 			return i
@@ -250,12 +272,13 @@ func objectPartIndex(parts []objectPartInfo, partNumber int) int {
 }
 
 // AddObjectPart - add a new object part in order.
-func (m *xlMetaV1) AddObjectPart(partNumber int, partName string, partETag string, partSize int64) {
-	partInfo := objectPartInfo{
-		Number: partNumber,
-		Name:   partName,
-		ETag:   partETag,
-		Size:   partSize,
+func (m *xlMetaV1) AddObjectPart(partNumber int, partName string, partETag string, partSize int64, actualSize int64) {
+	partInfo := ObjectPartInfo{
+		Number:     partNumber,
+		Name:       partName,
+		ETag:       partETag,
+		Size:       partSize,
+		ActualSize: actualSize,
 	}
 
 	// Update part info if it already exists.
@@ -347,7 +370,7 @@ func pickValidXLMeta(ctx context.Context, metaArr []xlMetaV1, modTime time.Time,
 var objMetadataOpIgnoredErrs = append(baseIgnoredErrs, errDiskAccessDenied, errVolumeNotFound, errFileNotFound, errFileAccessDenied, errCorruptedFormat)
 
 // readXLMetaParts - returns the XL Metadata Parts from xl.json of one of the disks picked at random.
-func (xl xlObjects) readXLMetaParts(ctx context.Context, bucket, object string) (xlMetaParts []objectPartInfo, xlMeta map[string]string, err error) {
+func (xl xlObjects) readXLMetaParts(ctx context.Context, bucket, object string) (xlMetaParts []ObjectPartInfo, xlMeta map[string]string, err error) {
 	var ignoredErrs []error
 	for _, disk := range xl.getLoadBalancedDisks() {
 		if disk == nil {
@@ -419,8 +442,9 @@ func writeXLMetadata(ctx context.Context, disk StorageAPI, bucket, prefix string
 		logger.LogIf(ctx, err)
 		return err
 	}
+
 	// Persist marshaled data.
-	err = disk.AppendFile(bucket, jsonFile, metadataBytes)
+	err = disk.WriteAll(bucket, jsonFile, metadataBytes)
 	logger.LogIf(ctx, err)
 	return err
 }

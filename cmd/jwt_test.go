@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -142,7 +142,7 @@ func TestWebRequestAuthenticate(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		gotErr := webRequestAuthenticate(testCase.req)
+		_, _, gotErr := webRequestAuthenticate(testCase.req)
 		if testCase.expectedErr != gotErr {
 			t.Errorf("Test %d, expected err %s, got %s", i+1, testCase.expectedErr, gotErr)
 		}

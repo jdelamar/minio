@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -62,15 +64,19 @@ func (target WebhookTarget) ID() event.TargetID {
 	return target.id
 }
 
-// Send - sends event to Webhook.
-func (target *WebhookTarget) Send(eventData event.Event) error {
+// Save - Sends event directly without persisting.
+func (target *WebhookTarget) Save(eventData event.Event) error {
+	return target.send(eventData)
+}
+
+func (target *WebhookTarget) send(eventData event.Event) error {
 	objectName, err := url.QueryUnescape(eventData.S3.Object.Key)
 	if err != nil {
 		return err
 	}
 	key := eventData.S3.Bucket.Name + "/" + objectName
 
-	data, err := json.Marshal(event.Log{eventData.EventName, key, []event.Event{eventData}})
+	data, err := json.Marshal(event.Log{EventName: eventData.EventName, Key: key, Records: []event.Event{eventData}})
 	if err != nil {
 		return err
 	}
@@ -80,7 +86,6 @@ func (target *WebhookTarget) Send(eventData event.Event) error {
 		return err
 	}
 
-	// req.Header.Set("User-Agent", globalServerUserAgent)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := target.httpClient.Do(req)
@@ -89,12 +94,18 @@ func (target *WebhookTarget) Send(eventData event.Event) error {
 	}
 
 	// FIXME: log returned error. ignore time being.
+	io.Copy(ioutil.Discard, resp.Body)
 	_ = resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("sending event failed with %v", resp.Status)
 	}
 
+	return nil
+}
+
+// Send - interface compatible method does no-op.
+func (target *WebhookTarget) Send(eventKey string) error {
 	return nil
 }
 
@@ -106,7 +117,7 @@ func (target *WebhookTarget) Close() error {
 // NewWebhookTarget - creates new Webhook target.
 func NewWebhookTarget(id string, args WebhookArgs) *WebhookTarget {
 	return &WebhookTarget{
-		id:   event.TargetID{id, "webhook"},
+		id:   event.TargetID{ID: id, Name: "webhook"},
 		args: args,
 		httpClient: &http.Client{
 			Transport: &http.Transport{

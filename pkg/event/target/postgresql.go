@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 //
 // * Namespace format
 //
-// On each create or update object event in Minio Object storage
+// On each create or update object event in MinIO Object storage
 // server, a row is created or updated in the table in Postgres. On
 // each object removal, the corresponding row is deleted from the
 // table.
@@ -62,7 +62,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq" // Register postgres driver
+	_ "github.com/lib/pq" // Register postgres driver
+
 	"github.com/minio/minio/pkg/event"
 	xnet "github.com/minio/minio/pkg/net"
 )
@@ -106,9 +107,8 @@ func (p PostgreSQLArgs) Validate() error {
 	}
 
 	if p.ConnectionString != "" {
-		if _, err := pq.ParseURL(p.ConnectionString); err != nil {
-			return err
-		}
+		// No pq API doesn't help to validate connection string
+		// prior connection, so no validation for now.
 	} else {
 		// Some fields need to be specified when ConnectionString is unspecified
 		if p.Port == "" {
@@ -140,8 +140,12 @@ func (target *PostgreSQLTarget) ID() event.TargetID {
 	return target.id
 }
 
-// Send - sends event to PostgreSQL.
-func (target *PostgreSQLTarget) Send(eventData event.Event) error {
+// Save - Sends event directly without persisting.
+func (target *PostgreSQLTarget) Save(eventData event.Event) error {
+	return target.send(eventData)
+}
+
+func (target *PostgreSQLTarget) send(eventData event.Event) error {
 	if target.args.Format == event.NamespaceFormat {
 		objectName, err := url.QueryUnescape(eventData.S3.Object.Key)
 		if err != nil {
@@ -177,6 +181,11 @@ func (target *PostgreSQLTarget) Send(eventData event.Event) error {
 		return err
 	}
 
+	return nil
+}
+
+// Send - interface compatible method does no-op.
+func (target *PostgreSQLTarget) Send(eventKey string) error {
 	return nil
 }
 
@@ -259,7 +268,7 @@ func NewPostgreSQLTarget(id string, args PostgreSQLArgs) (*PostgreSQLTarget, err
 	}
 
 	return &PostgreSQLTarget{
-		id:         event.TargetID{id, "postgresql"},
+		id:         event.TargetID{ID: id, Name: "postgresql"},
 		args:       args,
 		updateStmt: updateStmt,
 		deleteStmt: deleteStmt,

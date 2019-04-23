@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,16 +20,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sync"
 
-	"github.com/miekg/dns"
 	"github.com/minio/minio/cmd/crypto"
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
-
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/event/target"
+	"github.com/minio/minio/pkg/iam/policy"
+	"github.com/minio/minio/pkg/iam/validator"
+	xnet "github.com/minio/minio/pkg/net"
 )
 
 // Steps to move from version N to version N+1
@@ -41,9 +44,9 @@ import (
 // 6. Make changes in config-current_test.go for any test change
 
 // Config version
-const serverConfigVersion = "28"
+const serverConfigVersion = "33"
 
-type serverConfig = serverConfigV28
+type serverConfig = serverConfigV33
 
 var (
 	// globalServerConfig server config.
@@ -97,12 +100,6 @@ func (s *serverConfig) GetCredential() auth.Credentials {
 	return s.Credential
 }
 
-// SetBrowser set if browser is enabled.
-func (s *serverConfig) SetBrowser(b bool) {
-	// Set the new value.
-	s.Browser = BoolFlag(b)
-}
-
 // SetWorm set if worm is enabled.
 func (s *serverConfig) SetWorm(b bool) {
 	// Set the new value.
@@ -124,17 +121,6 @@ func (s *serverConfig) GetStorageClass() (storageClass, storageClass) {
 		return storageClass{}, storageClass{}
 	}
 	return s.StorageClass.Standard, s.StorageClass.RRS
-}
-
-// GetBrowser get current credentials.
-func (s *serverConfig) GetBrowser() bool {
-	if globalIsEnvBrowser {
-		return globalIsBrowserEnabled
-	}
-	if s == nil {
-		return true
-	}
-	return bool(s.Browser)
 }
 
 // GetWorm get current credentials.
@@ -188,79 +174,86 @@ func (s *serverConfig) Validate() error {
 	}
 
 	// Region: nothing to validate
-	// Browser, Worm, Cache and StorageClass values are already validated during json unmarshal
-
-	if s.Domain != "" {
-		if _, ok := dns.IsDomainName(s.Domain); !ok {
-			return errors.New("invalid domain name")
-		}
-	}
-
+	// Worm, Cache and StorageClass values are already validated during json unmarshal
 	for _, v := range s.Notify.AMQP {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("amqp: %s", err.Error())
+			return fmt.Errorf("amqp: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.Elasticsearch {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("elasticsearch: %s", err.Error())
+			return fmt.Errorf("elasticsearch: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.Kafka {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("kafka: %s", err.Error())
+			return fmt.Errorf("kafka: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.MQTT {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("mqtt: %s", err.Error())
+			return fmt.Errorf("mqtt: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.MySQL {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("mysql: %s", err.Error())
+			return fmt.Errorf("mysql: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.NATS {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("nats: %s", err.Error())
+			return fmt.Errorf("nats: %s", err)
+		}
+	}
+
+	for _, v := range s.Notify.NSQ {
+		if err := v.Validate(); err != nil {
+			return fmt.Errorf("nsq: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.PostgreSQL {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("postgreSQL: %s", err.Error())
+			return fmt.Errorf("postgreSQL: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.Redis {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("redis: %s", err.Error())
+			return fmt.Errorf("redis: %s", err)
 		}
 	}
 
 	for _, v := range s.Notify.Webhook {
 		if err := v.Validate(); err != nil {
-			return fmt.Errorf("webhook: %s", err.Error())
+			return fmt.Errorf("webhook: %s", err)
 		}
 	}
 
 	return nil
 }
 
+// SetCompressionConfig sets the current compression config
+func (s *serverConfig) SetCompressionConfig(extensions []string, mimeTypes []string) {
+	s.Compression.Extensions = extensions
+	s.Compression.MimeTypes = mimeTypes
+	s.Compression.Enabled = globalIsCompressionEnabled
+}
+
+// GetCompressionConfig gets the current compression config
+func (s *serverConfig) GetCompressionConfig() compressionConfig {
+	return s.Compression
+}
+
 func (s *serverConfig) loadFromEnvs() {
 	// If env is set override the credentials from config file.
 	if globalIsEnvCreds {
 		s.SetCredential(globalActiveCred)
-	}
-
-	if globalIsEnvBrowser {
-		s.SetBrowser(globalIsBrowserEnabled)
 	}
 
 	if globalIsEnvWORM {
@@ -271,10 +264,6 @@ func (s *serverConfig) loadFromEnvs() {
 		s.SetRegion(globalServerRegion)
 	}
 
-	if globalIsEnvDomainName {
-		s.Domain = globalDomainName
-	}
-
 	if globalIsStorageClass {
 		s.SetStorageClass(globalStandardStorageClass, globalRRStorageClass)
 	}
@@ -283,9 +272,134 @@ func (s *serverConfig) loadFromEnvs() {
 		s.SetCacheConfig(globalCacheDrives, globalCacheExcludes, globalCacheExpiry, globalCacheMaxUse)
 	}
 
-	if globalKMS != nil {
-		s.KMS = globalKMSConfig
+	if err := Environment.LookupKMSConfig(s.KMS); err != nil {
+		logger.FatalIf(err, "Unable to setup the KMS")
 	}
+
+	if globalIsEnvCompression {
+		s.SetCompressionConfig(globalCompressExtensions, globalCompressMimeTypes)
+	}
+
+	if jwksURL, ok := os.LookupEnv("MINIO_IAM_JWKS_URL"); ok {
+		if u, err := xnet.ParseURL(jwksURL); err == nil {
+			s.OpenID.JWKS.URL = u
+			logger.FatalIf(s.OpenID.JWKS.PopulatePublicKey(), "Unable to populate public key from JWKS URL")
+		}
+	}
+
+	if opaURL, ok := os.LookupEnv("MINIO_IAM_OPA_URL"); ok {
+		if u, err := xnet.ParseURL(opaURL); err == nil {
+			s.Policy.OPA.URL = u
+			s.Policy.OPA.AuthToken = os.Getenv("MINIO_IAM_OPA_AUTHTOKEN")
+		}
+	}
+}
+
+// TestNotificationTargets tries to establish connections to all notification
+// targets when enabled. This is a good way to make sure all configurations
+// set by the user can work.
+func (s *serverConfig) TestNotificationTargets() error {
+	for k, v := range s.Notify.AMQP {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewAMQPTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("amqp(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.Elasticsearch {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewElasticsearchTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("elasticsearch(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.Kafka {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewKafkaTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("kafka(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.MQTT {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewMQTTTarget(k, v, GlobalServiceDoneCh)
+		if err != nil {
+			return fmt.Errorf("mqtt(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.MySQL {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewMySQLTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("mysql(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.NATS {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewNATSTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("nats(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.NSQ {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewNSQTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("nsq(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.PostgreSQL {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewPostgreSQLTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("postgreSQL(%s): %s", k, err.Error())
+		}
+		t.Close()
+	}
+
+	for k, v := range s.Notify.Redis {
+		if !v.Enable {
+			continue
+		}
+		t, err := target.NewRedisTarget(k, v)
+		if err != nil {
+			return fmt.Errorf("redis(%s): %s", k, err.Error())
+		}
+		t.Close()
+
+	}
+
+	return nil
 }
 
 // Returns the string describing a difference with the given
@@ -299,18 +413,18 @@ func (s *serverConfig) ConfigDiff(t *serverConfig) string {
 		return "Credential configuration differs"
 	case s.Region != t.Region:
 		return "Region configuration differs"
-	case s.Browser != t.Browser:
-		return "Browser configuration differs"
-	case s.Domain != t.Domain:
-		return "Domain configuration differs"
 	case s.StorageClass != t.StorageClass:
 		return "StorageClass configuration differs"
 	case !reflect.DeepEqual(s.Cache, t.Cache):
 		return "Cache configuration differs"
+	case !reflect.DeepEqual(s.Compression, t.Compression):
+		return "Compression configuration differs"
 	case !reflect.DeepEqual(s.Notify.AMQP, t.Notify.AMQP):
 		return "AMQP Notification configuration differs"
 	case !reflect.DeepEqual(s.Notify.NATS, t.Notify.NATS):
 		return "NATS Notification configuration differs"
+	case !reflect.DeepEqual(s.Notify.NSQ, t.Notify.NSQ):
+		return "NSQ Notification configuration differs"
 	case !reflect.DeepEqual(s.Notify.Elasticsearch, t.Notify.Elasticsearch):
 		return "ElasticSearch Notification configuration differs"
 	case !reflect.DeepEqual(s.Notify.Redis, t.Notify.Redis):
@@ -346,7 +460,6 @@ func newServerConfig() *serverConfig {
 		Version:    serverConfigVersion,
 		Credential: cred,
 		Region:     globalMinioDefaultRegion,
-		Browser:    true,
 		StorageClass: storageClassConfig{
 			Standard: storageClass{},
 			RRS:      storageClass{},
@@ -359,6 +472,11 @@ func newServerConfig() *serverConfig {
 		},
 		KMS:    crypto.KMSConfig{},
 		Notify: notifier{},
+		Compression: compressionConfig{
+			Enabled:    false,
+			Extensions: globalCompressExtensions,
+			MimeTypes:  globalCompressMimeTypes,
+		},
 	}
 
 	// Make sure to initialize notification configs.
@@ -372,6 +490,8 @@ func newServerConfig() *serverConfig {
 	srvCfg.Notify.Redis["1"] = target.RedisArgs{}
 	srvCfg.Notify.NATS = make(map[string]target.NATSArgs)
 	srvCfg.Notify.NATS["1"] = target.NATSArgs{}
+	srvCfg.Notify.NSQ = make(map[string]target.NSQArgs)
+	srvCfg.Notify.NSQ["1"] = target.NSQArgs{}
 	srvCfg.Notify.PostgreSQL = make(map[string]target.PostgreSQLArgs)
 	srvCfg.Notify.PostgreSQL["1"] = target.PostgreSQLArgs{}
 	srvCfg.Notify.MySQL = make(map[string]target.MySQLArgs)
@@ -399,17 +519,11 @@ func (s *serverConfig) loadToCachedConfigs() {
 	if !globalIsEnvCreds {
 		globalActiveCred = s.GetCredential()
 	}
-	if !globalIsEnvBrowser {
-		globalIsBrowserEnabled = s.GetBrowser()
-	}
 	if !globalIsEnvWORM {
 		globalWORMEnabled = s.GetWorm()
 	}
 	if !globalIsEnvRegion {
 		globalServerRegion = s.GetRegion()
-	}
-	if !globalIsEnvDomainName {
-		globalDomainName = s.Domain
 	}
 	if !globalIsStorageClass {
 		globalStandardStorageClass, globalRRStorageClass = s.GetStorageClass()
@@ -421,18 +535,32 @@ func (s *serverConfig) loadToCachedConfigs() {
 		globalCacheExpiry = cacheConf.Expiry
 		globalCacheMaxUse = cacheConf.MaxUse
 	}
-	if globalKMS == nil {
-		globalKMSConfig = s.KMS
-		if kms, err := crypto.NewVault(globalKMSConfig); err == nil {
-			globalKMS = kms
-			globalKMSKeyID = globalKMSConfig.Vault.Key.Name
-		}
+	if err := Environment.LookupKMSConfig(s.KMS); err != nil {
+		logger.FatalIf(err, "Unable to setup the KMS")
+	}
+
+	if !globalIsCompressionEnabled {
+		compressionConf := s.GetCompressionConfig()
+		globalCompressExtensions = compressionConf.Extensions
+		globalCompressMimeTypes = compressionConf.MimeTypes
+		globalIsCompressionEnabled = compressionConf.Enabled
+	}
+
+	globalIAMValidators = getAuthValidators(s)
+
+	if s.Policy.OPA.URL != nil && s.Policy.OPA.URL.String() != "" {
+		globalPolicyOPA = iampolicy.NewOpa(iampolicy.OpaArgs{
+			URL:         s.Policy.OPA.URL,
+			AuthToken:   s.Policy.OPA.AuthToken,
+			Transport:   NewCustomHTTPTransport(),
+			CloseRespFn: xhttp.DrainBody,
+		})
 	}
 }
 
-// newConfig - initialize a new server config, saves env parameters if
+// newSrvConfig - initialize a new server config, saves env parameters if
 // found, otherwise use default parameters
-func newConfig(objAPI ObjectLayer) error {
+func newSrvConfig(objAPI ObjectLayer) error {
 	// Initialize server config.
 	srvCfg := newServerConfig()
 
@@ -448,7 +576,7 @@ func newConfig(objAPI ObjectLayer) error {
 	globalServerConfigMu.Unlock()
 
 	// Save config into file.
-	return saveServerConfig(objAPI, globalServerConfig)
+	return saveServerConfig(context.Background(), objAPI, globalServerConfig)
 }
 
 // getValidConfig - returns valid server configuration
@@ -481,6 +609,20 @@ func loadConfig(objAPI ObjectLayer) error {
 	globalServerConfigMu.Unlock()
 
 	return nil
+}
+
+// getAuthValidators - returns ValidatorList which contains
+// enabled providers in server config.
+// A new authentication provider is added like below
+// * Add a new provider in pkg/iam/validator package.
+func getAuthValidators(config *serverConfig) *validator.Validators {
+	validators := validator.NewValidators()
+
+	if config.OpenID.JWKS.URL != nil {
+		validators.Add(validator.NewJWT(config.OpenID.JWKS))
+	}
+
+	return validators
 }
 
 // getNotificationTargets - returns TargetList which contains enabled targets in serverConfig.
@@ -539,7 +681,8 @@ func getNotificationTargets(config *serverConfig) *event.TargetList {
 
 	for id, args := range config.Notify.MQTT {
 		if args.Enable {
-			newTarget, err := target.NewMQTTTarget(id, args)
+			args.RootCAs = globalRootCAs
+			newTarget, err := target.NewMQTTTarget(id, args, GlobalServiceDoneCh)
 			if err != nil {
 				logger.LogIf(context.Background(), err)
 				continue
@@ -568,6 +711,20 @@ func getNotificationTargets(config *serverConfig) *event.TargetList {
 	for id, args := range config.Notify.NATS {
 		if args.Enable {
 			newTarget, err := target.NewNATSTarget(id, args)
+			if err != nil {
+				logger.LogIf(context.Background(), err)
+				continue
+			}
+			if err = targetList.Add(newTarget); err != nil {
+				logger.LogIf(context.Background(), err)
+				continue
+			}
+		}
+	}
+
+	for id, args := range config.Notify.NSQ {
+		if args.Enable {
+			newTarget, err := target.NewNSQTarget(id, args)
 			if err != nil {
 				logger.LogIf(context.Background(), err)
 				continue
@@ -609,6 +766,7 @@ func getNotificationTargets(config *serverConfig) *event.TargetList {
 
 	for id, args := range config.Notify.Webhook {
 		if args.Enable {
+			args.RootCAs = globalRootCAs
 			newTarget := target.NewWebhookTarget(id, args)
 			if err := targetList.Add(newTarget); err != nil {
 				logger.LogIf(context.Background(), err)

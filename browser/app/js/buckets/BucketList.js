@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,8 +67,12 @@ const mapDispatchToProps = dispatch => {
   return {
     fetchBuckets: () => dispatch(actionsBuckets.fetchBuckets()),
     setBucketList: buckets => dispatch(actionsBuckets.setList(buckets)),
-    selectBucket: bucket => dispatch(actionsBuckets.selectBucket(bucket))
+    selectBucket: (bucket, prefix) =>
+      dispatch(actionsBuckets.selectBucket(bucket, prefix))
   }
 }
 
-export default connect(mapStateToProps, mapDispatchToProps)(BucketList)
+export default connect(
+  mapStateToProps,
+  mapDispatchToProps
+)(BucketList)

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package target
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -32,6 +33,16 @@ type KafkaArgs struct {
 	Enable  bool        `json:"enable"`
 	Brokers []xnet.Host `json:"brokers"`
 	Topic   string      `json:"topic"`
+	TLS     struct {
+		Enable     bool               `json:"enable"`
+		SkipVerify bool               `json:"skipVerify"`
+		ClientAuth tls.ClientAuthType `json:"clientAuth"`
+	} `json:"tls"`
+	SASL struct {
+		Enable   bool   `json:"enable"`
+		User     string `json:"username"`
+		Password string `json:"password"`
+	} `json:"sasl"`
 }
 
 // Validate KafkaArgs fields
@@ -62,15 +73,19 @@ func (target *KafkaTarget) ID() event.TargetID {
 	return target.id
 }
 
-// Send - sends event to Kafka.
-func (target *KafkaTarget) Send(eventData event.Event) error {
+// Save - Sends event directly without persisting.
+func (target *KafkaTarget) Save(eventData event.Event) error {
+	return target.send(eventData)
+}
+
+func (target *KafkaTarget) send(eventData event.Event) error {
 	objectName, err := url.QueryUnescape(eventData.S3.Object.Key)
 	if err != nil {
 		return err
 	}
 	key := eventData.S3.Bucket.Name + "/" + objectName
 
-	data, err := json.Marshal(event.Log{eventData.EventName, key, []event.Event{eventData}})
+	data, err := json.Marshal(event.Log{EventName: eventData.EventName, Key: key, Records: []event.Event{eventData}})
 	if err != nil {
 		return err
 	}
@@ -85,14 +100,30 @@ func (target *KafkaTarget) Send(eventData event.Event) error {
 	return err
 }
 
+// Send - interface compatible method does no-op.
+func (target *KafkaTarget) Send(eventKey string) error {
+	return nil
+}
+
 // Close - closes underneath kafka connection.
 func (target *KafkaTarget) Close() error {
 	return target.producer.Close()
 }
 
-// NewKafkaTarget - creates new Kafka target.
+// NewKafkaTarget - creates new Kafka target with auth credentials.
 func NewKafkaTarget(id string, args KafkaArgs) (*KafkaTarget, error) {
 	config := sarama.NewConfig()
+
+	config.Net.SASL.User = args.SASL.User
+	config.Net.SASL.Password = args.SASL.Password
+	config.Net.SASL.Enable = args.SASL.Enable
+
+	config.Net.TLS.Enable = args.TLS.Enable
+	tlsConfig := &tls.Config{
+		ClientAuth: args.TLS.ClientAuth,
+	}
+	config.Net.TLS.Config = tlsConfig
+
 	config.Producer.RequiredAcks = sarama.WaitForAll
 	config.Producer.Retry.Max = 10
 	config.Producer.Return.Successes = true
@@ -107,7 +138,7 @@ func NewKafkaTarget(id string, args KafkaArgs) (*KafkaTarget, error) {
 	}
 
 	return &KafkaTarget{
-		id:       event.TargetID{id, "kafka"},
+		id:       event.TargetID{ID: id, Name: "kafka"},
 		args:     args,
 		producer: producer,
 	}, nil

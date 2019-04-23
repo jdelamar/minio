@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,12 +27,12 @@ const DefaultVersion = "2012-10-17"
 
 // Args - arguments to policy to check whether it is allowed
 type Args struct {
-	AccountName     string
-	Action          Action
-	BucketName      string
-	ConditionValues map[string][]string
-	IsOwner         bool
-	ObjectName      string
+	AccountName     string              `json:"account"`
+	Action          Action              `json:"action"`
+	BucketName      string              `json:"bucket"`
+	ConditionValues map[string][]string `json:"conditions"`
+	IsOwner         bool                `json:"owner"`
+	ObjectName      string              `json:"object"`
 }
 
 // Policy - bucket policy.

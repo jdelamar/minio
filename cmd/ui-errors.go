@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,13 +20,19 @@ var (
 	uiErrInvalidConfig = newUIErrFn(
 		"Invalid value found in the configuration file",
 		"Please ensure a valid value in the configuration file",
-		"For more details, refer to https://docs.minio.io/docs/minio-server-configuration-guide",
+		"For more details, refer to https://docs.min.io/docs/minio-server-configuration-guide",
 	)
 
 	uiErrInvalidBrowserValue = newUIErrFn(
 		"Invalid browser value",
 		"Please check the passed value",
 		"Browser can only accept `on` and `off` values. To disable web browser access, set this value to `off`",
+	)
+
+	uiErrInvalidDomainValue = newUIErrFn(
+		"Invalid domain value",
+		"Please check the passed value",
+		"Domain can only accept DNS compatible values.",
 	)
 
 	uiErrInvalidErasureSetSize = newUIErrFn(
@@ -74,48 +80,49 @@ Secret key should be in between 8 and 40 characters.`,
 
 	uiErrEnvCredentialsMissingGateway = newUIErrFn(
 		"Credentials missing",
-		"Please provide correct credentials",
-		`Access key and Secret key should be specified in Gateway mode from environment variables MINIO_ACCESS_KEY and MINIO_SECRET_KEY respectively.`,
+		"Please set your credentials in the environment",
+		`In Gateway mode, access and secret keys should be specified via environment variables MINIO_ACCESS_KEY and MINIO_SECRET_KEY respectively.`,
 	)
 
-	uiErrEnvCredentialsMissingServer = newUIErrFn(
+	uiErrEnvCredentialsMissingDistributed = newUIErrFn(
 		"Credentials missing",
-		"Please provide correct credentials",
-		`Access key and Secret key should be specified in distributed server mode from environment variables MINIO_ACCESS_KEY and MINIO_SECRET_KEY respectively.`,
+		"Please set your credentials in the environment",
+		`In distributed server mode, access and secret keys should be specified via environment variables MINIO_ACCESS_KEY and MINIO_SECRET_KEY respectively.`,
 	)
 
 	uiErrInvalidErasureEndpoints = newUIErrFn(
 		"Invalid endpoint(s) in erasure mode",
 		"Please provide correct combination of local/remote paths",
-		"For more information, please refer to https://docs.minio.io/docs/minio-erasure-code-quickstart-guide",
+		"For more information, please refer to https://docs.min.io/docs/minio-erasure-code-quickstart-guide",
 	)
 
 	uiErrInvalidNumberOfErasureEndpoints = newUIErrFn(
 		"Invalid total number of endpoints for erasure mode",
 		"Please provide an even number of endpoints greater or equal to 4",
-		"For more information, please refer to https://docs.minio.io/docs/minio-erasure-code-quickstart-guide",
+		"For more information, please refer to https://docs.min.io/docs/minio-erasure-code-quickstart-guide",
 	)
 
 	uiErrStorageClassValue = newUIErrFn(
 		"Invalid storage class value",
 		"Please check the value",
-		`MINIO_STORAGE_CLASS_STANDARD: Format "EC:<Default_Parity_Standard_Class>" (e.g. "EC:3"). This sets the number of parity disks for Minio server in Standard mode. Objects are stored in Standard mode, if storage class is not defined in Put request.
-MINIO_STORAGE_CLASS_RRS: Format "EC:<Default_Parity_Reduced_Redundancy_Class>" (e.g. "EC:3"). This sets the number of parity disks for Minio server in Reduced Redundancy mode. Objects are stored in Reduced Redundancy mode, if Put request specifies RRS storage class.
+		`MINIO_STORAGE_CLASS_STANDARD: Format "EC:<Default_Parity_Standard_Class>" (e.g. "EC:3"). This sets the number of parity disks for MinIO server in Standard mode. Objects are stored in Standard mode, if storage class is not defined in Put request.
+MINIO_STORAGE_CLASS_RRS: Format "EC:<Default_Parity_Reduced_Redundancy_Class>" (e.g. "EC:3"). This sets the number of parity disks for MinIO server in Reduced Redundancy mode. Objects are stored in Reduced Redundancy mode, if Put request specifies RRS storage class.
 Refer to the link https://github.com/minio/minio/tree/master/docs/erasure/storage-class for more information.`,
 	)
 
 	uiErrUnexpectedBackendVersion = newUIErrFn(
 		"Backend version seems to be too recent",
-		"Please update to the latest Minio version",
+		"Please update to the latest MinIO version",
 		"",
 	)
 
 	uiErrInvalidAddressFlag = newUIErrFn(
 		"--address input is invalid",
 		"Please check --address parameter",
-		`--address binds to a specific ADDRESS:PORT, ADDRESS can be an  IP or hostname (default port is ':9000')
-    Examples: --address ':443'
-              --address '172.16.34.31:9000'`,
+		`--address binds to a specific ADDRESS:PORT, ADDRESS can be an IPv4/IPv6 address or hostname (default port is ':9000')
+	Examples: --address ':443'
+		  --address '172.16.34.31:9000'
+		  --address '[fe80::da00:a6c8:e3ae:ddd7]:9000'`,
 	)
 
 	uiErrInvalidFSEndpoint = newUIErrFn(
@@ -128,7 +135,7 @@ Example 1:
 
 	uiErrUnableToWriteInBackend = newUIErrFn(
 		"Unable to write to the backend",
-		"Please ensure Minio binary has write permissions for the backend",
+		"Please ensure MinIO binary has write permissions for the backend",
 		"",
 	)
 
@@ -165,7 +172,7 @@ Example 1:
 	uiErrNoCertsAndHTTPSEndpoints = newUIErrFn(
 		"HTTPS specified in endpoints, but no TLS certificate is found on the local machine",
 		"Please add a certificate or switch to HTTP.",
-		"Refer to https://docs.minio.io/docs/how-to-secure-access-to-minio-server-with-tls for information about how to load a TLS certificate in your server.",
+		"Refer to https://docs.min.io/docs/how-to-secure-access-to-minio-server-with-tls for information about how to load a TLS certificate in your server.",
 	)
 
 	uiErrCertsAndHTTPEndpoints = newUIErrFn(
@@ -182,13 +189,31 @@ Example 1:
 
 	uiErrUnexpectedDataContent = newUIErrFn(
 		"Unexpected data content",
-		"Please contact Minio at https://slack.minio.io",
+		"Please contact MinIO at https://slack.min.io",
 		"",
 	)
 
 	uiErrUnexpectedError = newUIErrFn(
 		"Unexpected error",
-		"Please contact Minio at https://slack.minio.io",
+		"Please contact MinIO at https://slack.min.io",
 		"",
+	)
+
+	uiErrInvalidCompressionIncludesValue = newUIErrFn(
+		"Invalid compression include value",
+		"Please check the passed value",
+		"Compress extensions/mime-types are delimited by `,`. For eg, MINIO_COMPRESS_ATTR=\"A,B,C\"",
+	)
+
+	uiErrInvalidGWSSEValue = newUIErrFn(
+		"Invalid gateway SSE value",
+		"Please check the passed value",
+		"MINIO_GATEWAY_SSE: Gateway SSE accepts only C and S3 as valid values. Delimit by `;` to set more than one value",
+	)
+
+	uiErrInvalidGWSSEEnvValue = newUIErrFn(
+		"Invalid gateway SSE configuration",
+		"",
+		"Refer to https://docs.min.io/docs/minio-kms-quickstart-guide.html for setting up SSE",
 	)
 )
