@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ var toAPIErrorTests = []struct {
 	// SSE-C errors
 	{err: crypto.ErrInvalidCustomerAlgorithm, errCode: ErrInvalidSSECustomerAlgorithm},
 	{err: crypto.ErrMissingCustomerKey, errCode: ErrMissingSSECustomerKey},
-	{err: crypto.ErrInvalidCustomerKey, errCode: ErrInvalidSSECustomerKey},
+	{err: crypto.ErrInvalidCustomerKey, errCode: ErrAccessDenied},
 	{err: crypto.ErrMissingCustomerKeyMD5, errCode: ErrMissingSSECustomerKeyMD5},
 	{err: crypto.ErrCustomerKeyMD5Mismatch, errCode: ErrSSECustomerKeyMD5Mismatch},
 	{err: errObjectTampered, errCode: ErrObjectTampered},

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -305,21 +305,6 @@ func getObjectLocation(r *http.Request, domains []string, bucket, object string)
 	return u.String()
 }
 
-// s3EncodeName encodes string in response when encodingType
-// is specified in AWS S3 requests.
-func s3EncodeName(name string, encodingType string) (result string) {
-	// Quick path to exit
-	if encodingType == "" {
-		return name
-	}
-	encodingType = strings.ToLower(encodingType)
-	switch encodingType {
-	case "url":
-		return url.QueryEscape(name)
-	}
-	return name
-}
-
 // generates ListBucketsResponse from array of BucketInfo which can be
 // serialized to match XML and JSON API spec output.
 func generateListBucketsResponse(buckets []BucketInfo) ListBucketsResponse {
@@ -594,7 +579,7 @@ func writeErrorResponse(ctx context.Context, w http.ResponseWriter, err APIError
 	case "AccessDenied":
 		// The request is from browser and also if browser
 		// is enabled we need to redirect.
-		if browser && globalIsBrowserEnabled {
+		if browser {
 			w.Header().Set("Location", minioReservedBucketPath+reqURL.Path)
 			w.WriteHeader(http.StatusTemporaryRedirect)
 			return
@@ -639,4 +624,39 @@ func writeCustomErrorResponseJSON(ctx context.Context, w http.ResponseWriter, er
 	}
 	encodedErrorResponse := encodeResponseJSON(errorResponse)
 	writeResponse(w, err.HTTPStatusCode, encodedErrorResponse, mimeJSON)
+}
+
+// writeCustomErrorResponseXML - similar to writeErrorResponse,
+// but accepts the error message directly (this allows messages to be
+// dynamically generated.)
+func writeCustomErrorResponseXML(ctx context.Context, w http.ResponseWriter, err APIError, errBody string, reqURL *url.URL, browser bool) {
+
+	switch err.Code {
+	case "SlowDown", "XMinioServerNotInitialized", "XMinioReadQuorum", "XMinioWriteQuorum":
+		// Set retry-after header to indicate user-agents to retry request after 120secs.
+		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
+		w.Header().Set("Retry-After", "120")
+	case "AccessDenied":
+		// The request is from browser and also if browser
+		// is enabled we need to redirect.
+		if browser && globalIsBrowserEnabled {
+			w.Header().Set("Location", minioReservedBucketPath+reqURL.Path)
+			w.WriteHeader(http.StatusTemporaryRedirect)
+			return
+		}
+	}
+
+	reqInfo := logger.GetReqInfo(ctx)
+	errorResponse := APIErrorResponse{
+		Code:       err.Code,
+		Message:    errBody,
+		Resource:   reqURL.Path,
+		BucketName: reqInfo.BucketName,
+		Key:        reqInfo.ObjectName,
+		RequestID:  w.Header().Get(responseRequestIDKey),
+		HostID:     w.Header().Get(responseDeploymentIDKey),
+	}
+
+	encodedErrorResponse := encodeResponse(errorResponse)
+	writeResponse(w, err.HTTPStatusCode, encodedErrorResponse, mimeXML)
 }

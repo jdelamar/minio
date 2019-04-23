@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -138,14 +138,17 @@ func (l *s3EncObjects) ListObjectsV2(ctx context.Context, bucket, prefix, contin
 	loi.ContinuationToken = continuationToken
 	loi.Objects = make([]minio.ObjectInfo, 0)
 	loi.Prefixes = make([]string, 0)
+	loi.Objects = append(loi.Objects, objects...)
 
-	for _, obj := range objects {
-		loi.NextContinuationToken = obj.Name
-		loi.Objects = append(loi.Objects, obj)
-	}
 	for _, pfx := range prefixes {
 		if pfx != prefix {
 			loi.Prefixes = append(loi.Prefixes, pfx)
+		}
+	}
+	// Set continuation token if s3 returned truncated list
+	if isTruncated {
+		if len(objects) > 0 {
+			loi.NextContinuationToken = objects[len(objects)-1].Name
 		}
 	}
 	return loi, nil
@@ -313,7 +316,7 @@ func (l *s3EncObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 		return l.s3Objects.GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
 	}
 	objInfo.UserDefined = minio.CleanMinioInternalMetadataKeys(objInfo.UserDefined)
-	fn, off, length, err := minio.NewGetObjectReader(rs, objInfo)
+	fn, off, length, err := minio.NewGetObjectReader(rs, objInfo, o.CheckCopyPrecondFn)
 	if err != nil {
 		return nil, minio.ErrorRespToObjectError(err)
 	}
@@ -329,7 +332,7 @@ func (l *s3EncObjects) GetObjectNInfo(ctx context.Context, bucket, object string
 	// Setup cleanup function to cause the above go-routine to
 	// exit in case of partial read
 	pipeCloser := func() { pr.Close() }
-	return fn(pr, h, pipeCloser)
+	return fn(pr, h, o.CheckCopyPrecondFn, pipeCloser)
 }
 
 // GetObjectInfo reads object info and replies back ObjectInfo

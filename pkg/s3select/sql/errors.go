@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 
 package sql
+
+import "fmt"
 
 type s3Error struct {
 	code       string
@@ -91,7 +93,16 @@ func errQueryAnalysisFailure(err error) *s3Error {
 func errBadTableName(err error) *s3Error {
 	return &s3Error{
 		code:       "BadTableName",
-		message:    "The table name is not supported",
+		message:    fmt.Sprintf("The table name is not supported: %v", err),
+		statusCode: 400,
+		cause:      err,
+	}
+}
+
+func errDataSource(err error) *s3Error {
+	return &s3Error{
+		code:       "DataSourcePathUnsupported",
+		message:    fmt.Sprintf("Data source: %v", err),
 		statusCode: 400,
 		cause:      err,
 	}

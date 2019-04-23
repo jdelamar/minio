@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import (
 var errUnexpected = errors.New("Unexpected error, please report this issue at https://github.com/minio/minio/issues")
 
 // errCorruptedFormat - corrupted backend format.
-var errCorruptedFormat = errors.New("corrupted backend format, please join https://slack.minio.io for assistance")
+var errCorruptedFormat = errors.New("corrupted backend format, please join https://slack.min.io for assistance")
 
 // errUnformattedDisk - unformatted disk found.
 var errUnformattedDisk = errors.New("unformatted disk found")
@@ -66,8 +66,11 @@ var errVolumeNotEmpty = errors.New("volume is not empty")
 // errVolumeAccessDenied - cannot access volume, insufficient permissions.
 var errVolumeAccessDenied = errors.New("volume access denied")
 
-// errVolumeAccessDenied - cannot access file, insufficient permissions.
+// errFileAccessDenied - cannot access file, insufficient permissions.
 var errFileAccessDenied = errors.New("file access denied")
+
+// errFileParentIsFile - cannot have overlapping objects, parent is already a file.
+var errFileParentIsFile = errors.New("parent is a file")
 
 // errBitrotHashAlgoInvalid - the algo for bit-rot hash
 // verification is empty or invalid.

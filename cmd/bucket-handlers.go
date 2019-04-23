@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -226,7 +225,7 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 				continue
 			}
 			bucketsInfo = append(bucketsInfo, BucketInfo{
-				Name:    strings.Trim(dnsRecord.Key, slashSeparator),
+				Name:    dnsRecord.Key,
 				Created: dnsRecord.CreationDate,
 			})
 			bucketSet.Add(dnsRecord.Key)
@@ -371,13 +370,6 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 	// Write success response.
 	writeSuccessResponseXML(w, encodedSuccessResponse)
 
-	// Get host and port from Request.RemoteAddr failing which
-	// fill them with empty strings.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
-
 	// Notify deleted event for objects.
 	for _, dobj := range deletedObjects {
 		sendEvent(eventArgs{
@@ -389,8 +381,7 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 			ReqParams:    extractReqParams(r),
 			RespElements: extractRespElements(w),
 			UserAgent:    r.UserAgent(),
-			Host:         host,
-			Port:         port,
+			Host:         handlers.GetSourceIP(r),
 		})
 	}
 }
@@ -595,8 +586,8 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		}
 
 		// Make sure formValues adhere to policy restrictions.
-		if errCode = checkPostPolicy(formValues, postPolicyForm); errCode != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(errCode), r.URL, guessIsBrowserReq(r))
+		if err = checkPostPolicy(formValues, postPolicyForm); err != nil {
+			writeCustomErrorResponseXML(ctx, w, errorCodes.ToAPIErr(ErrAccessDenied), err.Error(), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
@@ -678,14 +669,8 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	}
 
 	location := getObjectLocation(r, globalDomainNames, bucket, object)
-	w.Header().Set("ETag", `"`+objInfo.ETag+`"`)
+	w.Header()["ETag"] = []string{`"` + objInfo.ETag + `"`}
 	w.Header().Set("Location", location)
-
-	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
 
 	// Notify object created event.
 	defer sendEvent(eventArgs{
@@ -695,8 +680,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 
 	if successRedirect != "" {
@@ -790,10 +774,6 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	globalNotificationSys.RemoveNotification(bucket)
-	globalPolicySys.Remove(bucket)
-	globalNotificationSys.DeleteBucket(ctx, bucket)
-
 	if globalDNSConfig != nil {
 		if err := globalDNSConfig.Delete(bucket); err != nil {
 			// Deleting DNS entry failed, attempt to create the bucket again.
@@ -802,6 +782,10 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 			return
 		}
 	}
+
+	globalNotificationSys.RemoveNotification(bucket)
+	globalPolicySys.Remove(bucket)
+	globalNotificationSys.DeleteBucket(ctx, bucket)
 
 	// Write success response.
 	writeSuccessNoContent(w)

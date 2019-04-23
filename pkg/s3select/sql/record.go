@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,32 @@
 
 package sql
 
+import "github.com/bcicen/jstream"
+
+// SelectObjectFormat specifies the format of the underlying data
+type SelectObjectFormat int
+
+const (
+	// SelectFmtUnknown - unknown format (default value)
+	SelectFmtUnknown SelectObjectFormat = iota
+	// SelectFmtCSV - CSV format
+	SelectFmtCSV
+	// SelectFmtJSON - JSON format
+	SelectFmtJSON
+	// SelectFmtParquet - Parquet format
+	SelectFmtParquet
+)
+
 // Record - is a type containing columns and their values.
 type Record interface {
 	Get(name string) (*Value, error)
 	Set(name string, value *Value) error
 	MarshalCSV(fieldDelimiter rune) ([]byte, error)
 	MarshalJSON() ([]byte, error)
+
+	// Returns underlying representation
+	Raw() (SelectObjectFormat, interface{})
+
+	// Replaces the underlying data
+	Replace(k jstream.KVS) error
 }

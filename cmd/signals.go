@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,9 @@ func handleSignals() {
 
 		err = globalHTTPServer.Shutdown()
 		logger.LogIf(context.Background(), err)
+
+		// send signal to various go-routines that they need to quit.
+		close(GlobalServiceDoneCh)
 
 		if objAPI := newObjectLayerFn(); objAPI != nil {
 			oerr = objAPI.Shutdown(context.Background())

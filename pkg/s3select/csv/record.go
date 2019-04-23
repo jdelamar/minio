@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,10 +19,12 @@ package csv
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/bcicen/jstream"
 	"github.com/minio/minio/pkg/s3select/sql"
-	"github.com/tidwall/sjson"
 )
 
 // Record - is CSV record.
@@ -78,20 +80,21 @@ func (r *Record) MarshalCSV(fieldDelimiter rune) ([]byte, error) {
 
 // MarshalJSON - encodes to JSON data.
 func (r *Record) MarshalJSON() ([]byte, error) {
-	data := "{}"
-
-	var err error
-	for i := len(r.columnNames) - 1; i >= 0; i-- {
-		if i >= len(r.csvRecord) {
-			continue
-		}
-
-		if data, err = sjson.Set(data, r.columnNames[i], r.csvRecord[i]); err != nil {
-			return nil, err
-		}
+	var kvs jstream.KVS = make([]jstream.KV, len(r.columnNames))
+	for i := 0; i < len(r.columnNames); i++ {
+		kvs[i] = jstream.KV{Key: r.columnNames[i], Value: r.csvRecord[i]}
 	}
+	return json.Marshal(kvs)
+}
 
-	return []byte(data), nil
+// Raw - returns the underlying data with format info.
+func (r *Record) Raw() (sql.SelectObjectFormat, interface{}) {
+	return sql.SelectFmtCSV, r
+}
+
+// Replace - is not supported for CSV
+func (r *Record) Replace(_ jstream.KVS) error {
+	return errors.New("Replace is not supported for CSV")
 }
 
 // NewRecord - creates new CSV record.
