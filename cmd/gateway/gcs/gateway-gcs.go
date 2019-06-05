@@ -763,7 +763,7 @@ func (l *gcsGateway) GetObjectNInfo(ctx context.Context, bucket, object string, 
 // startOffset indicates the starting read location of the object.
 // length indicates the total length of the object.
 func (l *gcsGateway) GetObject(ctx context.Context, bucket string, key string, startOffset int64, length int64, writer io.Writer, etag string, opts minio.ObjectOptions) error {
-	logger.Info("getting object %v from bucket $v", key,bucket )
+	fmt.Printf("LIZZ: getting object %v from bucket %v\n", key,bucket )
 	// if we want to mimic S3 behavior exactly, we need to verify if bucket exists first,
 	// otherwise gcs will just return object not exist in case of non-existing bucket
 	if _, err := l.client.Bucket(bucket).Attrs(ctx); err != nil {
@@ -870,7 +870,7 @@ func applyMetadataToGCSAttrs(metadata map[string]string, attrs *storage.ObjectAt
 
 // GetObjectInfo - reads object info and replies back ObjectInfo
 func (l *gcsGateway) GetObjectInfo(ctx context.Context, bucket string, object string, opts minio.ObjectOptions) (minio.ObjectInfo, error) {
-	logger.Info("getting object info for %v from bucket $v", object,bucket )
+	logger.Info("=====>getting object info for %v from bucket $v", object,bucket )
 	// if we want to mimic S3 behavior exactly, we need to verify if bucket exists first,
 	// otherwise gcs will just return object not exist in case of non-existing bucket
 	if _, err := l.client.Bucket(bucket).Attrs(ctx); err != nil {
