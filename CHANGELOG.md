@@ -1,7 +1,9 @@
 ## Current Release 
+### 0.12.0 
+**Release Date:** Wed Jun  5 20:03:17 UTC 2019     
+## Previous Releases 
 ### 0.11.0 
 **Release Date:** Wed Jun  5 16:34:48 UTC 2019     
-## Previous Releases 
 ### 0.10.0 
 **Release Date:** Fri Apr 26 15:42:33 UTC 2019     
 * Upgrading to minio RELEASE.2019-04-18T21-44-59Z
