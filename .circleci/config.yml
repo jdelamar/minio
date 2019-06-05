@@ -32,7 +32,7 @@ jobs:
                git config --global user.email "${CIRCLE_USERNAME}@accedian.com"
                git config --global user.name "CircleCI"
                git semver minor
-               export DOCKER_VER=timeoutdebug)
+               export DOCKER_VER=timeoutdebug
                git push origin master ${DOCKER_VER}
                make circleci-push  
             fi
