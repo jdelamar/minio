@@ -167,6 +167,8 @@ func serverHandleCmdArgs(ctx *cli.Context) {
 	}
 	logger.FatalIf(err, "Invalid command line arguments")
 
+	logger.LogIf(context.Background(), checkEndpointsSubOptimal(ctx, setupType, globalEndpoints))
+
 	globalMinioHost, globalMinioPort = mustSplitHostPort(globalMinioAddr)
 
 	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
@@ -199,6 +201,8 @@ func serverMain(ctx *cli.Context) {
 	if ctx.Args().First() == "help" || !endpointsPresent(ctx) {
 		cli.ShowCommandHelpAndExit(ctx, "server", 1)
 	}
+
+	signal.Notify(globalOSSignalCh, os.Interrupt, syscall.SIGTERM)
 
 	// Disable logging until server initialization is complete, any
 	// error during initialization will be shown as a fatal message
@@ -304,8 +308,6 @@ func serverMain(ctx *cli.Context) {
 	go func() {
 		globalHTTPServerErrorCh <- globalHTTPServer.Start()
 	}()
-
-	signal.Notify(globalOSSignalCh, os.Interrupt, syscall.SIGTERM)
 
 	newObject, err := newObjectLayer(globalEndpoints)
 	if err != nil {
