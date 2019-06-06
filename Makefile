@@ -85,7 +85,7 @@ install: build
 	@echo "Installation successful. To learn more, try \"minio --help\"."
 
 circleci-docker-build:
-	docker build -t ${DOCKER_TAG} -f Dockerfile .
+	docker build -t ${DOCKER_TAG} -f Dockerfile.dev .
 
 circleci-push: circleci-docker-build
 	docker push  ${DOCKER_TAG}
