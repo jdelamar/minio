@@ -2,6 +2,9 @@ FROM golang:1.13-alpine
 
 LABEL maintainer="MinIO Inc <dev@min.io>"
 
+ARG MINIO_VERSION
+ENV MINIO_RELEASE=$MINIO_VERSION
+
 ENV GOPATH /go
 ENV CGO_ENABLED 0
 ENV GO111MODULE on
@@ -9,8 +12,9 @@ ENV GOPROXY https://proxy.golang.org
 
 RUN  \
      apk add --no-cache git && \
-     git clone https://github.com/minio/minio && cd minio && \
+     git clone https://github.com/minio/minio && cd minio && git checkout $MINIO_RELEASE && \
      go install -v -ldflags "$(go run buildscripts/gen-ldflags.go)"
+
 
 FROM alpine:3.9
 

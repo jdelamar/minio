@@ -10,10 +10,11 @@ TAG ?= "minio/minio:$(VERSION)"
 
 BUILD_LDFLAGS := '$(LDFLAGS)'
 
+MINIO_VERSION=RELEASE.2019-10-02T21-19-38Z
 DOCKER_REPO_NAME:= gcr.io/npav-172917/
 DOCKER_IMAGE_NAME := minio
 GO_REPOSITORY_PATH := github.com/accedian/$(DOCKER_IMAGE_NAME)
-DOCKER_VER := RELEASE.2019-05-02T19-07-09Z-$(if $(DOCKER_VER),$(DOCKER_VER),$(shell whoami)-dev)
+DOCKER_VER := $(MINIO_VERSION)-$(if $(DOCKER_VER),$(DOCKER_VER),$(shell whoami)-dev)
 SOLUTION_NAME := Minio
 DOCKER_TAG := $(DOCKER_REPO_NAME)$(DOCKER_IMAGE_NAME):$(DOCKER_VER)
 
@@ -85,6 +86,9 @@ build: checks
 	@GO111MODULE=on CGO_ENABLED=0 go build -tags kqueue --ldflags $(BUILD_LDFLAGS) -o $(PWD)/minio 1>/dev/null
 
 docker: build
+	@docker build --build-arg MINIO_VERSION=$(MINIO_VERSION) -t ${DOCKER_TAG}   -f Dockerfile .
+
+docker-dev: build
 	@docker build -t ${DOCKER_TAG}  . -f Dockerfile.dev
 
 # Builds minio and installs it to $GOPATH/bin.
@@ -94,7 +98,7 @@ install: build
 	@echo "Installation successful. To learn more, try \"minio --help\"."
 
 circleci-docker-build:
-	docker build -t ${DOCKER_TAG} -f Dockerfile.dev .
+	@docker build --build-arg MINIO_VERSION=$(MINIO_VERSION) -t ${DOCKER_TAG}   -f Dockerfile .
 
 circleci-push: circleci-docker-build
 	docker push  ${DOCKER_TAG}
