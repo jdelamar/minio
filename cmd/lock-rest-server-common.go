@@ -17,15 +17,12 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"path"
 	"time"
-
-	"github.com/minio/minio/cmd/logger"
 )
 
-const lockRESTVersion = "v1"
+const lockRESTVersion = "v2"
 const lockRESTPath = minioReservedBucketPath + "/lock/" + lockRESTVersion
 
 var lockServicePath = path.Join(minioReservedBucketPath, lockServiceSubPath)
@@ -37,6 +34,18 @@ const (
 	lockRESTMethodRUnlock     = "runlock"
 	lockRESTMethodForceUnlock = "forceunlock"
 	lockRESTMethodExpired     = "expired"
+
+	// Unique ID of lock/unlock request.
+	lockRESTUID = "uid"
+	// Source contains the line number, function and file name of the code
+	// on the client node that requested the lock.
+	lockRESTSource = "source"
+	// Resource contains a entity to be locked/unlocked.
+	lockRESTResource = "resource"
+	// ServerAddr contains the address of the server who requested lock/unlock of the above resource.
+	lockRESTServerAddr = "serverAddr"
+	// ServiceEndpoint contains the network path of above server to do lock/unlock.
+	lockRESTServerEndpoint = "serverEndpoint"
 )
 
 // nameLockRequesterInfoPair is a helper type for lock maintenance
@@ -45,36 +54,29 @@ type nameLockRequesterInfoPair struct {
 	lri  lockRequesterInfo
 }
 
-type lockResponse struct {
-	Success bool
-}
+var errLockConflict = errors.New("lock conflict")
+var errLockNotExpired = errors.New("lock not expired")
 
 // Similar to removeEntry but only removes an entry only if the lock entry exists in map.
 func (l *localLocker) removeEntryIfExists(nlrip nameLockRequesterInfoPair) {
 	// Check if entry is still in map (could have been removed altogether by 'concurrent' (R)Unlock of last entry)
 	if lri, ok := l.lockMap[nlrip.name]; ok {
-		if !l.removeEntry(nlrip.name, nlrip.lri.UID, &lri) {
-			// Remove failed, in case it is a:
-			if nlrip.lri.Writer {
-				// Writer: this should never happen as the whole (mapped) entry should have been deleted
-				reqInfo := (&logger.ReqInfo{}).AppendTags("name", nlrip.name)
-				reqInfo.AppendTags("uid", nlrip.lri.UID)
-				ctx := logger.SetReqInfo(context.Background(), reqInfo)
-				logger.LogIf(ctx, errors.New("Lock maintenance failed to remove entry for write lock (should never happen)"))
-			} // Reader: this can happen if multiple read locks were active and
-			// the one we are looking for has been released concurrently (so it is fine).
-		} // Removal went okay, all is fine.
+		// Even if the entry exists, it may not be the same entry which was
+		// considered as expired, so we simply an attempt to remove it if its
+		// not possible there is nothing we need to do.
+		l.removeEntry(nlrip.name, nlrip.lri.UID, &lri)
 	}
 }
 
-// removeEntry either, based on the uid of the lock message, removes a single entry from the
-// lockRequesterInfo array or the whole array from the map (in case of a write lock or last read lock)
+// removeEntry based on the uid of the lock message, removes a single entry from the
+// lockRequesterInfo array or the whole array from the map (in case of a write lock
+// or last read lock)
 func (l *localLocker) removeEntry(name, uid string, lri *[]lockRequesterInfo) bool {
 	// Find correct entry to remove based on uid.
 	for index, entry := range *lri {
 		if entry.UID == uid {
 			if len(*lri) == 1 {
-				// Remove the (last) lock.
+				// Remove the write lock.
 				delete(l.lockMap, name)
 			} else {
 				// Remove the appropriate read lock.
@@ -84,6 +86,7 @@ func (l *localLocker) removeEntry(name, uid string, lri *[]lockRequesterInfo) bo
 			return true
 		}
 	}
+
 	// None found return false, perhaps entry removed in previous run.
 	return false
 }

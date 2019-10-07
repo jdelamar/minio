@@ -19,7 +19,10 @@ package target
 import (
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/minio/minio/pkg/event"
@@ -33,14 +36,11 @@ var errNotConnected = errors.New("not connected to target server/service")
 // errLimitExceeded error is sent when the maximum limit is reached.
 var errLimitExceeded = errors.New("the maximum store limit reached")
 
-// errNoSuchKey error is sent in Get when the key is not found.
-var errNoSuchKey = errors.New("no such key found in store")
-
 // Store - To persist the events.
 type Store interface {
 	Put(event event.Event) error
 	Get(key string) (event.Event, error)
-	ListN(n int) []string
+	List() []string
 	Del(key string) error
 	Open() error
 }
@@ -55,7 +55,7 @@ func replayEvents(store Store, doneCh <-chan struct{}) <-chan string {
 		defer retryTimer.Stop()
 		defer close(eventKeyCh)
 		for {
-			names = store.ListN(100)
+			names = store.List()
 			for _, name := range names {
 				select {
 				case eventKeyCh <- strings.TrimSuffix(name, eventExt):
@@ -79,6 +79,36 @@ func replayEvents(store Store, doneCh <-chan struct{}) <-chan string {
 	return eventKeyCh
 }
 
+// IsConnRefusedErr - To check fot "connection refused" error.
+func IsConnRefusedErr(err error) bool {
+	if opErr, ok := err.(*net.OpError); ok {
+		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
+			if errno, ok := sysErr.Err.(syscall.Errno); ok {
+				if errno == syscall.ECONNREFUSED {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// IsConnResetErr - Checks for connection reset errors.
+func IsConnResetErr(err error) bool {
+	if strings.Contains(err.Error(), "connection reset by peer") {
+		return true
+	}
+	// incase if error message is wrapped.
+	if opErr, ok := err.(*net.OpError); ok {
+		if syscallErr, ok := opErr.Err.(*os.SyscallError); ok {
+			if syscallErr.Err == syscall.ECONNRESET {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // sendEvents - Reads events from the store and re-plays.
 func sendEvents(target event.Target, eventKeyCh <-chan string, doneCh <-chan struct{}) {
 	retryTimer := time.NewTimer(retryInterval)
@@ -91,7 +121,7 @@ func sendEvents(target event.Target, eventKeyCh <-chan string, doneCh <-chan str
 				break
 			}
 
-			if err != errNotConnected {
+			if err != errNotConnected && !IsConnResetErr(err) {
 				panic(fmt.Errorf("target.Send() failed with '%v'", err))
 			}
 

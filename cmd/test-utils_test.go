@@ -54,8 +54,8 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/gorilla/mux"
-	"github.com/minio/minio-go/pkg/s3signer"
-	"github.com/minio/minio-go/pkg/s3utils"
+	"github.com/minio/minio-go/v6/pkg/s3signer"
+	"github.com/minio/minio-go/v6/pkg/s3utils"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/bpool"
@@ -138,7 +138,7 @@ func calculateSignedChunkLength(chunkDataSize int64) int64 {
 }
 
 func mustGetPutObjReader(t TestErrHandler, data io.Reader, size int64, md5hex, sha256hex string) *PutObjReader {
-	hr, err := hash.NewReader(data, size, md5hex, sha256hex, size)
+	hr, err := hash.NewReader(data, size, md5hex, sha256hex, size, globalCLIContext.StrictS3Compat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func prepareFS() (ObjectLayer, string, error) {
 	return obj, fsDirs[0], nil
 }
 
-func prepareXL32() (ObjectLayer, []string, error) {
+func prepareXLSets32() (ObjectLayer, []string, error) {
 	fsDirs1, err := getRandomDisks(16)
 	if err != nil {
 		return nil, nil, err
@@ -359,11 +359,19 @@ func UnstartedTestServer(t TestErrHandler, instanceType string) TestServer {
 	globalIAMSys = NewIAMSys()
 	globalIAMSys.Init(objLayer)
 
+	buckets, err := objLayer.ListBuckets(context.Background())
+	if err != nil {
+		t.Fatalf("Unable to list buckets on backend %s", err)
+	}
+
 	globalPolicySys = NewPolicySys()
-	globalPolicySys.Init(objLayer)
+	globalPolicySys.Init(buckets, objLayer)
 
 	globalNotificationSys = NewNotificationSys(globalServerConfig, testServer.Disks)
-	globalNotificationSys.Init(objLayer)
+	globalNotificationSys.Init(buckets, objLayer)
+
+	globalLifecycleSys = NewLifecycleSys()
+	globalLifecycleSys.Init(buckets, objLayer)
 
 	return testServer
 }
@@ -460,16 +468,13 @@ func resetGlobalIsEnvs() {
 	globalIsEnvWORM = false
 	globalIsEnvBrowser = false
 	globalIsEnvRegion = false
-	globalIsStorageClass = false
-}
-
-func resetGlobalStorageEnvs() {
-	globalStandardStorageClass = storageClass{}
-	globalRRStorageClass = storageClass{}
 }
 
 // reset global heal state
 func resetGlobalHealState() {
+	if globalAllHealState == nil {
+		return
+	}
 	globalAllHealState.Lock()
 	defer globalAllHealState.Unlock()
 	for _, v := range globalAllHealState.healSeqMap {
@@ -512,8 +517,6 @@ func resetTestGlobals() {
 	resetGlobalIsXL()
 	// Reset global isEnvCreds flag.
 	resetGlobalIsEnvs()
-	// Reset global storage class flags
-	resetGlobalStorageEnvs()
 	// Reset global heal state
 	resetGlobalHealState()
 	//Reset global disk cache flags
@@ -701,7 +704,7 @@ func signStreamingRequest(req *http.Request, accessKey, secretKey string, currTi
 		globalMinioDefaultRegion,
 		string(serviceS3),
 		"aws4_request",
-	}, "/")
+	}, SlashSeparator)
 
 	stringToSign := "AWS4-HMAC-SHA256" + "\n" + currTime.Format(iso8601Format) + "\n"
 	stringToSign = stringToSign + scope + "\n"
@@ -716,7 +719,7 @@ func signStreamingRequest(req *http.Request, accessKey, secretKey string, currTi
 
 	// final Authorization header
 	parts := []string{
-		"AWS4-HMAC-SHA256" + " Credential=" + accessKey + "/" + scope,
+		"AWS4-HMAC-SHA256" + " Credential=" + accessKey + SlashSeparator + scope,
 		"SignedHeaders=" + signedHeaders,
 		"Signature=" + signature,
 	}
@@ -781,7 +784,7 @@ func assembleStreamingChunks(req *http.Request, body io.ReadSeeker, chunkSize in
 			regionStr,
 			string(serviceS3),
 			"aws4_request",
-		}, "/")
+		}, SlashSeparator)
 
 		stringToSign := "AWS4-HMAC-SHA256-PAYLOAD" + "\n"
 		stringToSign = stringToSign + currTime.Format(iso8601Format) + "\n"
@@ -1056,7 +1059,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 		region,
 		string(serviceS3),
 		"aws4_request",
-	}, "/")
+	}, SlashSeparator)
 
 	stringToSign := "AWS4-HMAC-SHA256" + "\n" + currTime.Format(iso8601Format) + "\n"
 	stringToSign = stringToSign + scope + "\n"
@@ -1071,7 +1074,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 
 	// final Authorization header
 	parts := []string{
-		"AWS4-HMAC-SHA256" + " Credential=" + accessKey + "/" + scope,
+		"AWS4-HMAC-SHA256" + " Credential=" + accessKey + SlashSeparator + scope,
 		"SignedHeaders=" + signedHeaders,
 		"Signature=" + signature,
 	}
@@ -1083,7 +1086,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 
 // getCredentialString generate a credential string.
 func getCredentialString(accessKeyID, location string, t time.Time) string {
-	return accessKeyID + "/" + getScope(t, location)
+	return accessKeyID + SlashSeparator + getScope(t, location)
 }
 
 // getMD5HashBase64 returns MD5 hash in base64 encoding of given data.
@@ -1226,6 +1229,7 @@ func newWebRPCRequest(methodRPC, authorization string, body io.ReadSeeker) (*htt
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", "Mozilla")
 	req.Header.Set("Content-Type", "application/json")
 	if authorization != "" {
 		req.Header.Set("Authorization", "Bearer "+authorization)
@@ -1354,9 +1358,9 @@ func (t *EOFWriter) Write(p []byte) (n int, err error) {
 
 // construct URL for http requests for bucket operations.
 func makeTestTargetURL(endPoint, bucketName, objectName string, queryValues url.Values) string {
-	urlStr := endPoint + "/"
+	urlStr := endPoint + SlashSeparator
 	if bucketName != "" {
-		urlStr = urlStr + bucketName + "/"
+		urlStr = urlStr + bucketName + SlashSeparator
 	}
 	if objectName != "" {
 		urlStr = urlStr + s3utils.EncodePath(objectName)
@@ -1608,9 +1612,11 @@ func newTestObjectLayer(endpoints EndpointList) (newObject ObjectLayer, err erro
 		return nil, err
 	}
 
-	storageDisks, err := initStorageDisks(endpoints)
-	if err != nil {
-		return nil, err
+	storageDisks, errs := initStorageDisksWithErrors(endpoints)
+	for _, err = range errs {
+		if err != nil && err != errDiskNotFound {
+			return nil, err
+		}
 	}
 
 	// Initialize list pool.
@@ -1704,7 +1710,7 @@ func prepareTestBackend(instanceType string) (ObjectLayer, []string, error) {
 	switch instanceType {
 	// Total number of disks for XL sets backend is set to 32.
 	case XLSetsTestStr:
-		return prepareXL32()
+		return prepareXLSets32()
 	// Total number of disks for XL backend is set to 16.
 	case XLTestStr:
 		return prepareXL16()
@@ -1925,13 +1931,22 @@ func ExecObjectLayerAPITest(t *testing.T, objAPITest objAPITestType, endpoints [
 		t.Fatalf("Initialization of API handler tests failed: <ERROR> %s", err)
 	}
 
-	globalIAMSys = NewIAMSys()
-	globalIAMSys.Init(objLayer)
 	// initialize the server and obtain the credentials and root.
 	// credentials are necessary to sign the HTTP request.
 	if err = newTestConfig(globalMinioDefaultRegion, objLayer); err != nil {
 		t.Fatalf("Unable to initialize server config. %s", err)
 	}
+
+	globalIAMSys = NewIAMSys()
+	globalIAMSys.Init(objLayer)
+
+	buckets, err := objLayer.ListBuckets(context.Background())
+	if err != nil {
+		t.Fatalf("Unable to list buckets on backend %s", err)
+	}
+
+	globalPolicySys = NewPolicySys()
+	globalPolicySys.Init(buckets, objLayer)
 
 	credentials := globalServerConfig.GetCredential()
 
@@ -1982,7 +1997,7 @@ func ExecObjectLayerTest(t TestErrHandler, objTest objTestType) {
 	// Executing the object layer tests for single node setup.
 	objTest(objLayer, FSTestStr, t)
 
-	objLayer, fsDirs, err := prepareXL16()
+	objLayer, fsDirs, err := prepareXLSets32()
 	if err != nil {
 		t.Fatalf("Initialization of object layer failed for XL setup: %s", err)
 	}
@@ -2128,11 +2143,11 @@ func registerBucketLevelFunc(bucket *mux.Router, api objectAPIHandlers, apiFunct
 func registerAPIFunctions(muxRouter *mux.Router, objLayer ObjectLayer, apiFunctions ...string) {
 	if len(apiFunctions) == 0 {
 		// Register all api endpoints by default.
-		registerAPIRouter(muxRouter, true)
+		registerAPIRouter(muxRouter, true, false)
 		return
 	}
 	// API Router.
-	apiRouter := muxRouter.PathPrefix("/").Subrouter()
+	apiRouter := muxRouter.PathPrefix(SlashSeparator).Subrouter()
 	// Bucket router.
 	bucketRouter := apiRouter.PathPrefix("/{bucket}").Subrouter()
 
@@ -2169,7 +2184,7 @@ func initTestAPIEndPoints(objLayer ObjectLayer, apiFunctions []string) http.Hand
 		registerAPIFunctions(muxRouter, objLayer, apiFunctions...)
 		return muxRouter
 	}
-	registerAPIRouter(muxRouter, true)
+	registerAPIRouter(muxRouter, true, false)
 	return muxRouter
 }
 

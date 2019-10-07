@@ -69,7 +69,7 @@ func testGetBucketLocationHandler(obj ObjectLayer, instanceType, bucketName stri
 			expectedRespStatus: http.StatusForbidden,
 			locationResponse:   []byte(""),
 			errorResponse: APIErrorResponse{
-				Resource: "/" + bucketName + "/",
+				Resource: SlashSeparator + bucketName + SlashSeparator,
 				Code:     "InvalidAccessKeyId",
 				Message:  "The access key ID you provided does not exist in our records.",
 			},
@@ -394,7 +394,7 @@ func testListMultipartUploadsHandler(obj ObjectLayer, instanceType, bucketName s
 			prefix:             "",
 			keyMarker:          "",
 			uploadIDMarker:     "",
-			delimiter:          "/",
+			delimiter:          SlashSeparator,
 			maxUploads:         "100",
 			accessKey:          credentials.AccessKey,
 			secretKey:          credentials.SecretKey,
@@ -762,7 +762,7 @@ func testAPIDeleteMultipleObjectsHandler(obj ObjectLayer, instanceType, bucketNa
 		apiRouter.ServeHTTP(rec, req)
 		// Assert the response code with the expected status.
 		if rec.Code != testCase.expectedRespStatus {
-			t.Errorf("Case %d: MinIO %s: Expected the response status to be `%d`, but instead found `%d`", i+1, instanceType, testCase.expectedRespStatus, rec.Code)
+			t.Errorf("Test %d: MinIO %s: Expected the response status to be `%d`, but instead found `%d`", i+1, instanceType, testCase.expectedRespStatus, rec.Code)
 		}
 
 		// read the response body.

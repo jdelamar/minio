@@ -24,6 +24,7 @@ import (
 
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/cmd/logger/message/log"
+	"github.com/minio/minio/pkg/color"
 )
 
 // Target implements loggerTarget to send log
@@ -74,6 +75,11 @@ func (c *Target) Send(e interface{}) error {
 	apiString += ")"
 	timeString := "Time: " + time.Now().Format(logger.TimeFormat)
 
+	var deploymentID string
+	if entry.DeploymentID != "" {
+		deploymentID = "\nDeploymentID: " + entry.DeploymentID
+	}
+
 	var requestID string
 	if entry.RequestID != "" {
 		requestID = "\nRequestID: " + entry.RequestID
@@ -82,6 +88,11 @@ func (c *Target) Send(e interface{}) error {
 	var remoteHost string
 	if entry.RemoteHost != "" {
 		remoteHost = "\nRemoteHost: " + entry.RemoteHost
+	}
+
+	var host string
+	if entry.Host != "" {
+		host = "\nHost: " + entry.Host
 	}
 
 	var userAgent string
@@ -93,9 +104,9 @@ func (c *Target) Send(e interface{}) error {
 		tagString = "\n       " + tagString
 	}
 
-	var msg = logger.ColorFgRed(logger.ColorBold(entry.Trace.Message))
-	var output = fmt.Sprintf("\n%s\n%s%s%s%s\nError: %s%s\n%s",
-		apiString, timeString, requestID, remoteHost, userAgent,
+	var msg = color.FgRed(color.Bold(entry.Trace.Message))
+	var output = fmt.Sprintf("\n%s\n%s%s%s%s%s%s\nError: %s%s\n%s",
+		apiString, timeString, deploymentID, requestID, remoteHost, host, userAgent,
 		msg, tagString, strings.Join(trace, "\n"))
 
 	fmt.Println(output)

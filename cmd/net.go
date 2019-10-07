@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
+	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/logger"
 )
 
@@ -190,33 +190,20 @@ func isHostIP(ipAddress string) bool {
 	return net.ParseIP(host) != nil
 }
 
-// checkPortAvailability - check if given port is already in use.
+// checkPortAvailability - check if given host and port is already in use.
 // Note: The check method tries to listen on given port and closes it.
 // It is possible to have a disconnected client in this tiny window of time.
-func checkPortAvailability(port string) (err error) {
-	// Return true if err is "address already in use" error.
-	isAddrInUseErr := func(err error) (b bool) {
-		if opErr, ok := err.(*net.OpError); ok {
-			if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
-				if errno, ok := sysErr.Err.(syscall.Errno); ok {
-					b = (errno == syscall.EADDRINUSE)
-				}
-			}
-		}
-
-		return b
-	}
-
+func checkPortAvailability(host, port string) (err error) {
 	network := []string{"tcp", "tcp4", "tcp6"}
 	for _, n := range network {
-		l, err := net.Listen(n, net.JoinHostPort("", port))
+		l, err := net.Listen(n, net.JoinHostPort(host, port))
 		if err == nil {
 			// As we are able to listen on this network, the port is not in use.
 			// Close the listener and continue check other networks.
 			if err = l.Close(); err != nil {
 				return err
 			}
-		} else if isAddrInUseErr(err) {
+		} else if errors.Is(err, syscall.EADDRINUSE) {
 			// As we got EADDRINUSE error, the port is in use by other process.
 			// Return the error.
 			return err
@@ -348,7 +335,7 @@ func sameLocalAddrs(addr1, addr2 string) (bool, error) {
 func CheckLocalServerAddr(serverAddr string) error {
 	host, port, err := net.SplitHostPort(serverAddr)
 	if err != nil {
-		return uiErrInvalidAddressFlag(err)
+		return config.ErrInvalidAddressFlag(err)
 	}
 
 	// Strip off IPv6 zone information.
@@ -359,9 +346,9 @@ func CheckLocalServerAddr(serverAddr string) error {
 	// Check whether port is a valid port number.
 	p, err := strconv.Atoi(port)
 	if err != nil {
-		return uiErrInvalidAddressFlag(err).Msg("invalid port number")
+		return config.ErrInvalidAddressFlag(err).Msg("invalid port number")
 	} else if p < 1 || p > 65535 {
-		return uiErrInvalidAddressFlag(nil).Msg("port number must be between 1 to 65535")
+		return config.ErrInvalidAddressFlag(nil).Msg("port number must be between 1 to 65535")
 	}
 
 	// 0.0.0.0 is a wildcard address and refers to local network
@@ -373,7 +360,7 @@ func CheckLocalServerAddr(serverAddr string) error {
 			return err
 		}
 		if !isLocalHost {
-			return uiErrInvalidAddressFlag(nil).Msg("host in server address should be this server")
+			return config.ErrInvalidAddressFlag(nil).Msg("host in server address should be this server")
 		}
 	}
 

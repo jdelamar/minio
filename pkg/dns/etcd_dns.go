@@ -21,12 +21,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 
 	"github.com/coredns/coredns/plugin/etcd/msg"
 	etcd "github.com/coreos/etcd/clientv3"
@@ -56,7 +57,12 @@ func (c *coreDNS) List() ([]SrvRecord, error) {
 		if err != nil {
 			return nil, err
 		}
-		srvRecords = append(srvRecords, records...)
+		for _, record := range records {
+			if record.Key == "" {
+				continue
+			}
+			srvRecords = append(srvRecords, record)
+		}
 	}
 	return srvRecords, nil
 }
@@ -79,7 +85,7 @@ func (c *coreDNS) Get(bucket string) ([]SrvRecord, error) {
 			if record.Key != "" {
 				continue
 			}
-			srvRecords = append(srvRecords, records...)
+			srvRecords = append(srvRecords, record)
 		}
 	}
 	if len(srvRecords) == 0 {
@@ -191,6 +197,21 @@ func (c *coreDNS) Delete(bucket string) error {
 	return nil
 }
 
+// Removes a specific DNS entry
+func (c *coreDNS) DeleteRecord(record SrvRecord) error {
+	for _, domainName := range c.domainNames {
+		key := msg.Path(fmt.Sprintf("%s.%s.", record.Key, domainName), defaultPrefixPath)
+
+		dctx, dcancel := context.WithTimeout(context.Background(), defaultContextTimeout)
+		if _, err := c.etcdClient.Delete(dctx, key+etcdPathSeparator+record.Host); err != nil {
+			dcancel()
+			return err
+		}
+		dcancel()
+	}
+	return nil
+}
+
 // CoreDNS - represents dns config for coredns server.
 type coreDNS struct {
 	domainNames []string
@@ -210,9 +231,20 @@ func NewCoreDNS(domainNames []string, domainIPs set.StringSet, domainPort string
 		return nil, err
 	}
 
+	// strip ports off of domainIPs
+	domainIPsWithoutPorts := domainIPs.ApplyFunc(func(ip string) string {
+		host, _, err := net.SplitHostPort(ip)
+		if err != nil {
+			if strings.Contains(err.Error(), "missing port in address") {
+				host = ip
+			}
+		}
+		return host
+	})
+
 	return &coreDNS{
 		domainNames: domainNames,
-		domainIPs:   domainIPs,
+		domainIPs:   domainIPsWithoutPorts,
 		domainPort:  port,
 		etcdClient:  etcdClient,
 	}, nil

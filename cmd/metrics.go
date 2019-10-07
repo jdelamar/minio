@@ -34,11 +34,25 @@ var (
 		},
 		[]string{"request_type"},
 	)
+	minioVersionInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "minio",
+			Name:      "version_info",
+			Help:      "Version of current MinIO server instance",
+		},
+		[]string{
+			// current version
+			"version",
+			// commit-id of the current version
+			"commit",
+		},
+	)
 )
 
 func init() {
 	prometheus.MustRegister(httpRequestsDuration)
 	prometheus.MustRegister(newMinioCollector())
+	prometheus.MustRegister(minioVersionInfo)
 }
 
 // newMinioCollector describes the collector
@@ -63,6 +77,9 @@ func (c *minioCollector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect is called by the Prometheus registry when collecting metrics.
 func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
+
+	// Expose MinIO's version information
+	minioVersionInfo.WithLabelValues(Version, CommitID).Add(1)
 
 	// Always expose network stats
 
@@ -182,9 +199,13 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 func metricsHandler() http.Handler {
+
 	registry := prometheus.NewRegistry()
 
-	err := registry.Register(httpRequestsDuration)
+	err := registry.Register(minioVersionInfo)
+	logger.LogIf(context.Background(), err)
+
+	err = registry.Register(httpRequestsDuration)
 	logger.LogIf(context.Background(), err)
 
 	err = registry.Register(newMinioCollector())
@@ -202,4 +223,17 @@ func metricsHandler() http.Handler {
 				ErrorHandling: promhttp.ContinueOnError,
 			}),
 	)
+
+}
+
+// AuthMiddleware checks if the bearer token is valid and authorized.
+func AuthMiddleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims, _, authErr := webRequestAuthenticate(r)
+		if authErr != nil || !claims.VerifyIssuer("prometheus", true) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

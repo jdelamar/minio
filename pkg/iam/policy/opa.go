@@ -20,10 +20,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
-	"os"
 
+	"github.com/minio/minio/pkg/env"
 	xnet "github.com/minio/minio/pkg/net"
+)
+
+// Env IAM OPA URL
+const (
+	EnvIAMOPAURL       = "MINIO_IAM_OPA_URL"
+	EnvIAMOPAAuthToken = "MINIO_IAM_OPA_AUTHTOKEN"
 )
 
 // OpaArgs opa general purpose policy engine configuration.
@@ -36,6 +43,23 @@ type OpaArgs struct {
 
 // Validate - validate opa configuration params.
 func (a *OpaArgs) Validate() error {
+	req, err := http.NewRequest("POST", a.URL.String(), bytes.NewReader([]byte("")))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if a.AuthToken != "" {
+		req.Header.Set("Authorization", a.AuthToken)
+	}
+
+	client := &http.Client{Transport: a.Transport}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer a.CloseRespFn(resp.Body)
+
 	return nil
 }
 
@@ -45,27 +69,14 @@ func (a *OpaArgs) UnmarshalJSON(data []byte) error {
 	type subOpaArgs OpaArgs
 	var so subOpaArgs
 
-	if opaURL, ok := os.LookupEnv("MINIO_IAM_OPA_URL"); ok {
-		u, err := xnet.ParseURL(opaURL)
-		if err != nil {
-			return err
-		}
-		so.URL = u
-		so.AuthToken = os.Getenv("MINIO_IAM_OPA_AUTHTOKEN")
-	} else {
-		if err := json.Unmarshal(data, &so); err != nil {
-			return err
-		}
+	if err := json.Unmarshal(data, &so); err != nil {
+		return err
 	}
 
 	oa := OpaArgs(so)
 	if oa.URL == nil || oa.URL.String() == "" {
 		*a = oa
 		return nil
-	}
-
-	if err := oa.Validate(); err != nil {
-		return err
 	}
 
 	*a = oa
@@ -78,10 +89,36 @@ type Opa struct {
 	client *http.Client
 }
 
+// LookupConfig lookup Opa from config, override with any ENVs.
+func LookupConfig(args OpaArgs, transport *http.Transport, closeRespFn func(io.ReadCloser)) (OpaArgs, error) {
+	var urlStr string
+	if args.URL != nil {
+		urlStr = args.URL.String()
+	}
+	opaURL := env.Get(EnvIAMOPAURL, urlStr)
+	if opaURL == "" {
+		return args, nil
+	}
+	u, err := xnet.ParseURL(opaURL)
+	if err != nil {
+		return args, err
+	}
+	args = OpaArgs{
+		URL:         u,
+		AuthToken:   env.Get(EnvIAMOPAAuthToken, ""),
+		Transport:   transport,
+		CloseRespFn: closeRespFn,
+	}
+	if err = args.Validate(); err != nil {
+		return args, err
+	}
+	return args, nil
+}
+
 // NewOpa - initializes opa policy engine connector.
 func NewOpa(args OpaArgs) *Opa {
 	// No opa args.
-	if args.URL == nil && args.AuthToken == "" {
+	if args.URL == nil || args.URL.Scheme == "" && args.AuthToken == "" {
 		return nil
 	}
 	return &Opa{
@@ -91,9 +128,9 @@ func NewOpa(args OpaArgs) *Opa {
 }
 
 // IsAllowed - checks given policy args is allowed to continue the REST API.
-func (o *Opa) IsAllowed(args Args) bool {
+func (o *Opa) IsAllowed(args Args) (bool, error) {
 	if o == nil {
-		return false
+		return false, nil
 	}
 
 	// OPA input
@@ -102,12 +139,12 @@ func (o *Opa) IsAllowed(args Args) bool {
 
 	inputBytes, err := json.Marshal(body)
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	req, err := http.NewRequest("POST", o.args.URL.String(), bytes.NewReader(inputBytes))
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -117,20 +154,40 @@ func (o *Opa) IsAllowed(args Args) bool {
 
 	resp, err := o.client.Do(req)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer o.args.CloseRespFn(resp.Body)
 
-	// Handle OPA response
-	type opaResponse struct {
+	// Read the body to be saved later.
+	opaRespBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
+
+	// Handle large OPA responses when OPA URL is of
+	// form http://localhost:8181/v1/data/httpapi/authz
+	type opaResultAllow struct {
 		Result struct {
 			Allow bool `json:"allow"`
 		} `json:"result"`
 	}
-	var result opaResponse
-	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false
+
+	// Handle simpler OPA responses when OPA URL is of
+	// form http://localhost:8181/v1/data/httpapi/authz/allow
+	type opaResult struct {
+		Result bool `json:"result"`
 	}
 
-	return result.Result.Allow
+	respBody := bytes.NewReader(opaRespBytes)
+
+	var result opaResult
+	if err = json.NewDecoder(respBody).Decode(&result); err != nil {
+		respBody.Seek(0, 0)
+		var resultAllow opaResultAllow
+		if err = json.NewDecoder(respBody).Decode(&resultAllow); err != nil {
+			return false, err
+		}
+		return resultAllow.Result.Allow, nil
+	}
+	return result.Result, nil
 }

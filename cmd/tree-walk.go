@@ -59,7 +59,7 @@ func filterMatchingPrefix(entries []string, prefixEntry string) []string {
 type ListDirFunc func(bucket, prefixDir, prefixEntry string) (entries []string)
 
 // treeWalk walks directory tree recursively pushing TreeWalkResult into the channel as and when it encounters files.
-func doTreeWalk(ctx context.Context, bucket, prefixDir, entryPrefixMatch, marker string, recursive bool, listDir ListDirFunc, resultCh chan TreeWalkResult, endWalkCh chan struct{}, isEnd bool) error {
+func doTreeWalk(ctx context.Context, bucket, prefixDir, entryPrefixMatch, marker string, recursive bool, listDir ListDirFunc, resultCh chan TreeWalkResult, endWalkCh chan struct{}, isEnd bool) (totalNum int, treeErr error) {
 	// Example:
 	// if prefixDir="one/two/three/" and marker="four/five.txt" treeWalk is recursively
 	// called with prefixDir="one/two/three/four/" and marker="five.txt"
@@ -67,10 +67,10 @@ func doTreeWalk(ctx context.Context, bucket, prefixDir, entryPrefixMatch, marker
 	var markerBase, markerDir string
 	if marker != "" {
 		// Ex: if marker="four/five.txt", markerDir="four/" markerBase="five.txt"
-		markerSplit := strings.SplitN(marker, slashSeparator, 2)
+		markerSplit := strings.SplitN(marker, SlashSeparator, 2)
 		markerDir = markerSplit[0]
 		if len(markerSplit) == 2 {
-			markerDir += slashSeparator
+			markerDir += SlashSeparator
 			markerBase = markerSplit[1]
 		}
 	}
@@ -78,7 +78,7 @@ func doTreeWalk(ctx context.Context, bucket, prefixDir, entryPrefixMatch, marker
 	entries := listDir(bucket, prefixDir, entryPrefixMatch)
 	// For an empty list return right here.
 	if len(entries) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	// example:
@@ -90,19 +90,13 @@ func doTreeWalk(ctx context.Context, bucket, prefixDir, entryPrefixMatch, marker
 	entries = entries[idx:]
 	// For an empty list after search through the entries, return right here.
 	if len(entries) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	for i, entry := range entries {
 		pentry := pathJoin(prefixDir, entry)
+		isDir := hasSuffix(pentry, SlashSeparator)
 
-		leaf := !hasSuffix(pentry, slashSeparator)
-		var leafDir bool
-		if !leaf {
-			leafDir = false
-		}
-
-		isDir := !leafDir && !leaf
 		if i == 0 && markerDir == entry {
 			if !recursive {
 				// Skip as the marker would already be listed in the previous listing.
@@ -129,24 +123,31 @@ func doTreeWalk(ctx context.Context, bucket, prefixDir, entryPrefixMatch, marker
 			// markIsEnd is passed to this entry's treeWalk() so that treeWalker.end can be marked
 			// true at the end of the treeWalk stream.
 			markIsEnd := i == len(entries)-1 && isEnd
-			if err := doTreeWalk(ctx, bucket, pentry, prefixMatch, markerArg, recursive,
-				listDir, resultCh, endWalkCh, markIsEnd); err != nil {
-				return err
+			totalFound, err := doTreeWalk(ctx, bucket, pentry, prefixMatch, markerArg, recursive,
+				listDir, resultCh, endWalkCh, markIsEnd)
+			if err != nil {
+				return 0, err
 			}
-			continue
+
+			// A nil totalFound means this is an empty directory that
+			// needs to be sent to the result channel, otherwise continue
+			// to the next entry.
+			if totalFound > 0 {
+				continue
+			}
 		}
 
 		// EOF is set if we are at last entry and the caller indicated we at the end.
 		isEOF := ((i == len(entries)-1) && isEnd)
 		select {
 		case <-endWalkCh:
-			return errWalkAbort
+			return 0, errWalkAbort
 		case resultCh <- TreeWalkResult{entry: pentry, end: isEOF}:
 		}
 	}
 
 	// Everything is listed.
-	return nil
+	return len(entries), nil
 }
 
 // Initiate a new treeWalk in a goroutine.
@@ -164,7 +165,7 @@ func startTreeWalk(ctx context.Context, bucket, prefix, marker string, recursive
 	resultCh := make(chan TreeWalkResult, maxObjectList)
 	entryPrefixMatch := prefix
 	prefixDir := ""
-	lastIndex := strings.LastIndex(prefix, slashSeparator)
+	lastIndex := strings.LastIndex(prefix, SlashSeparator)
 	if lastIndex != -1 {
 		entryPrefixMatch = prefix[lastIndex+1:]
 		prefixDir = prefix[:lastIndex+1]

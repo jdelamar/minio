@@ -27,22 +27,6 @@ import (
 // underlying storage layer.
 func toObjectErr(err error, params ...string) error {
 	switch err {
-	case errDiskNotFound:
-		switch len(params) {
-		case 1:
-			err = BucketNotFound{Bucket: params[0]}
-		case 2:
-			err = ObjectNotFound{
-				Bucket: params[0],
-				Object: params[1],
-			}
-		case 3:
-			err = InvalidUploadID{
-				Bucket:   params[0],
-				Object:   params[1],
-				UploadID: params[2],
-			}
-		}
 	case errVolumeNotFound:
 		if len(params) >= 1 {
 			err = BucketNotFound{Bucket: params[0]}
@@ -219,14 +203,14 @@ func (e ObjectExistsAsDirectory) Error() string {
 type PrefixAccessDenied GenericError
 
 func (e PrefixAccessDenied) Error() string {
-	return "Prefix access is denied: " + e.Bucket + "/" + e.Object
+	return "Prefix access is denied: " + e.Bucket + SlashSeparator + e.Object
 }
 
 // ParentIsObject object access is denied.
 type ParentIsObject GenericError
 
 func (e ParentIsObject) Error() string {
-	return "Parent is object " + e.Bucket + "/" + path.Dir(e.Object)
+	return "Parent is object " + e.Bucket + SlashSeparator + path.Dir(e.Object)
 }
 
 // BucketExists bucket exists.
@@ -270,6 +254,13 @@ func (e BucketPolicyNotFound) Error() string {
 	return "No bucket policy found for bucket: " + e.Bucket
 }
 
+// BucketLifecycleNotFound - no bucket lifecycle found.
+type BucketLifecycleNotFound GenericError
+
+func (e BucketLifecycleNotFound) Error() string {
+	return "No bucket life cycle found for bucket : " + e.Bucket
+}
+
 /// Bucket related errors.
 
 // BucketNameInvalid - bucketname provided is invalid.
@@ -285,9 +276,25 @@ func (e BucketNameInvalid) Error() string {
 // ObjectNameInvalid - object name provided is invalid.
 type ObjectNameInvalid GenericError
 
+// ObjectNameTooLong - object name too long.
+type ObjectNameTooLong GenericError
+
+// ObjectNamePrefixAsSlash - object name has a slash as prefix.
+type ObjectNamePrefixAsSlash GenericError
+
 // Return string an error formatted as the given text.
 func (e ObjectNameInvalid) Error() string {
 	return "Object name invalid: " + e.Bucket + "#" + e.Object
+}
+
+// Return string an error formatted as the given text.
+func (e ObjectNameTooLong) Error() string {
+	return "Object name too long: " + e.Bucket + "#" + e.Object
+}
+
+// Return string an error formatted as the given text.
+func (e ObjectNamePrefixAsSlash) Error() string {
+	return "Object name contains forward slash as pefix: " + e.Bucket + "#" + e.Object
 }
 
 // AllAccessDisabled All access to this object has been disabled

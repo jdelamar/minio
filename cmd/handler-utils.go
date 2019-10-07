@@ -27,10 +27,10 @@ import (
 	"net/url"
 	"strings"
 
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/handlers"
-	httptracer "github.com/minio/minio/pkg/handlers"
 )
 
 // Parses location constraint from the incoming reader.
@@ -65,14 +65,14 @@ var supportedHeaders = []string{
 	"content-language",
 	"content-encoding",
 	"content-disposition",
-	amzStorageClass,
+	xhttp.AmzStorageClass,
 	"expires",
 	// Add more supported headers here.
 }
 
 // isMetadataDirectiveValid - check if metadata-directive is valid.
 func isMetadataDirectiveValid(h http.Header) bool {
-	_, ok := h[http.CanonicalHeaderKey("X-Amz-Metadata-Directive")]
+	_, ok := h[http.CanonicalHeaderKey(xhttp.AmzMetadataDirective)]
 	if ok {
 		// Check atleast set metadata-directive is valid.
 		return (isMetadataCopy(h) || isMetadataReplace(h))
@@ -84,19 +84,19 @@ func isMetadataDirectiveValid(h http.Header) bool {
 
 // Check if the metadata COPY is requested.
 func isMetadataCopy(h http.Header) bool {
-	return h.Get("X-Amz-Metadata-Directive") == "COPY"
+	return h.Get(xhttp.AmzMetadataDirective) == "COPY"
 }
 
 // Check if the metadata REPLACE is requested.
 func isMetadataReplace(h http.Header) bool {
-	return h.Get("X-Amz-Metadata-Directive") == "REPLACE"
+	return h.Get(xhttp.AmzMetadataDirective) == "REPLACE"
 }
 
 // Splits an incoming path into bucket and object components.
 func path2BucketAndObject(path string) (bucket, object string) {
 	// Skip the first element if it is '/', split the rest.
-	path = strings.TrimPrefix(path, "/")
-	pathComponents := strings.SplitN(path, "/", 2)
+	path = strings.TrimPrefix(path, SlashSeparator)
+	pathComponents := strings.SplitN(path, SlashSeparator, 2)
 
 	// Save the bucket and object extracted from path.
 	switch len(pathComponents) {
@@ -220,8 +220,8 @@ func extractReqParams(r *http.Request) map[string]string {
 func extractRespElements(w http.ResponseWriter) map[string]string {
 
 	return map[string]string{
-		"requestId":      w.Header().Get(responseRequestIDKey),
-		"content-length": w.Header().Get("Content-Length"),
+		"requestId":      w.Header().Get(xhttp.AmzRequestID),
+		"content-length": w.Header().Get(xhttp.ContentLength),
 		// Add more fields here.
 	}
 }
@@ -326,18 +326,26 @@ func extractPostPolicyFormValues(ctx context.Context, form *multipart.Form) (fil
 
 // Log headers and body.
 func httpTraceAll(f http.HandlerFunc) http.HandlerFunc {
-	if globalHTTPTraceFile == nil {
-		return f
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !globalHTTPTrace.HasSubscribers() {
+			f.ServeHTTP(w, r)
+			return
+		}
+		trace := Trace(f, true, w, r)
+		globalHTTPTrace.Publish(trace)
 	}
-	return httptracer.TraceReqHandlerFunc(f, globalHTTPTraceFile, true)
 }
 
 // Log only the headers.
 func httpTraceHdrs(f http.HandlerFunc) http.HandlerFunc {
-	if globalHTTPTraceFile == nil {
-		return f
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !globalHTTPTrace.HasSubscribers() {
+			f.ServeHTTP(w, r)
+			return
+		}
+		trace := Trace(f, false, w, r)
+		globalHTTPTrace.Publish(trace)
 	}
-	return httptracer.TraceReqHandlerFunc(f, globalHTTPTraceFile, false)
 }
 
 // Returns "/bucketName/objectName" for path-style or virtual-host-style requests.
@@ -362,7 +370,7 @@ func getResource(path string, host string, domains []string) (string, error) {
 			continue
 		}
 		bucket := strings.TrimSuffix(host, "."+domain)
-		return slashSeparator + pathJoin(bucket, path), nil
+		return SlashSeparator + pathJoin(bucket, path), nil
 	}
 	return path, nil
 }
@@ -375,4 +383,29 @@ func notFoundHandlerJSON(w http.ResponseWriter, r *http.Request) {
 // If none of the http routes match respond with MethodNotAllowed
 func notFoundHandler(w http.ResponseWriter, r *http.Request) {
 	writeErrorResponse(context.Background(), w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
+}
+
+// If the API version does not match with current version.
+func versionMismatchHandler(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	switch {
+	case strings.HasPrefix(path, minioReservedBucketPath+"/peer/"):
+		writeVersionMismatchResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidAPIVersion), r.URL, false)
+	case strings.HasPrefix(path, minioReservedBucketPath+"/storage/"):
+		writeVersionMismatchResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidAPIVersion), r.URL, false)
+	case strings.HasPrefix(path, minioReservedBucketPath+"/lock/"):
+		writeVersionMismatchResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidAPIVersion), r.URL, false)
+	default:
+		writeVersionMismatchResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidAPIVersion), r.URL, true)
+	}
+}
+
+// gets host name for current node
+func getHostName(r *http.Request) (hostName string) {
+	if globalIsDistXL {
+		hostName = GetLocalPeer(globalEndpoints)
+	} else {
+		hostName = r.Host
+	}
+	return
 }

@@ -1,5 +1,5 @@
 /*
- * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
+ * MinIO Cloud Storage, (C) 2017-2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +17,17 @@
 package cmd
 
 import (
-	"context"
 	"net/http"
-	"os"
 	"strings"
 
+	"github.com/minio/minio/cmd/config"
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/env"
 	"github.com/minio/minio/pkg/hash"
+	xnet "github.com/minio/minio/pkg/net"
 
-	minio "github.com/minio/minio-go"
+	minio "github.com/minio/minio-go/v6"
 )
 
 var (
@@ -49,9 +51,6 @@ var (
 
 	// IsStringEqual is string equal.
 	IsStringEqual = isStringEqual
-
-	// GetCompleteMultipartMD5 returns multipart MD5
-	GetCompleteMultipartMD5 = getCompleteMultipartMD5
 )
 
 // StatInfo -  alias for statInfo
@@ -170,7 +169,7 @@ func FromMinioClientListMultipartsInfo(lmur minio.ListMultipartUploadsResult) Li
 // FromMinioClientObjectInfo converts minio ObjectInfo to gateway ObjectInfo
 func FromMinioClientObjectInfo(bucket string, oi minio.ObjectInfo) ObjectInfo {
 	userDefined := FromMinioClientMetadata(oi.Metadata)
-	userDefined["Content-Type"] = oi.ContentType
+	userDefined[xhttp.ContentType] = oi.ContentType
 
 	return ObjectInfo{
 		Bucket:          bucket,
@@ -180,7 +179,7 @@ func FromMinioClientObjectInfo(bucket string, oi minio.ObjectInfo) ObjectInfo {
 		ETag:            canonicalizeETag(oi.ETag),
 		UserDefined:     userDefined,
 		ContentType:     oi.ContentType,
-		ContentEncoding: oi.Metadata.Get("Content-Encoding"),
+		ContentEncoding: oi.Metadata.Get(xhttp.ContentEncoding),
 		StorageClass:    oi.StorageClass,
 		Expires:         oi.Expires,
 	}
@@ -302,7 +301,7 @@ func ErrorRespToObjectError(err error, params ...string) error {
 		object = params[1]
 	}
 
-	if isNetworkOrHostDown(err) {
+	if xnet.IsNetworkOrHostDown(err) {
 		return BackendDown{}
 	}
 
@@ -320,6 +319,8 @@ func ErrorRespToObjectError(err error, params ...string) error {
 		err = BucketNotEmpty{}
 	case "NoSuchBucketPolicy":
 		err = BucketPolicyNotFound{}
+	case "NoSuchBucketLifecycle":
+		err = BucketLifecycleNotFound{}
 	case "InvalidBucketName":
 		err = BucketNameInvalid{Bucket: bucket}
 	case "InvalidPart":
@@ -351,8 +352,8 @@ func ErrorRespToObjectError(err error, params ...string) error {
 }
 
 // ComputeCompleteMultipartMD5 calculates MD5 ETag for complete multipart responses
-func ComputeCompleteMultipartMD5(parts []CompletePart) (string, error) {
-	return getCompleteMultipartMD5(context.Background(), parts)
+func ComputeCompleteMultipartMD5(parts []CompletePart) string {
+	return getCompleteMultipartMD5(parts)
 }
 
 // parse gateway sse env variable
@@ -365,14 +366,14 @@ func parseGatewaySSE(s string) (gatewaySSE, error) {
 			gwSlice = append(gwSlice, v)
 			continue
 		}
-		return nil, uiErrInvalidGWSSEValue(nil).Msg("gateway SSE cannot be (%s) ", v)
+		return nil, config.ErrInvalidGWSSEValue(nil).Msg("gateway SSE cannot be (%s) ", v)
 	}
 	return gatewaySSE(gwSlice), nil
 }
 
 // handle gateway env vars
 func handleGatewayEnvVars() {
-	gwsseVal, ok := os.LookupEnv("MINIO_GATEWAY_SSE")
+	gwsseVal, ok := env.Lookup("MINIO_GATEWAY_SSE")
 	if ok {
 		var err error
 		GlobalGatewaySSE, err = parseGatewaySSE(gwsseVal)

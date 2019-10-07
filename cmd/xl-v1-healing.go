@@ -57,7 +57,7 @@ func healBucket(ctx context.Context, storageDisks []StorageAPI, bucket string, w
 	dryRun bool) (res madmin.HealResultItem, err error) {
 
 	// Initialize sync waitgroup.
-	var wg = &sync.WaitGroup{}
+	var wg sync.WaitGroup
 
 	// Initialize list of errors.
 	var dErrs = make([]error, len(storageDisks))
@@ -191,14 +191,14 @@ func shouldHealObjectOnDisk(xlErr, dataErr error, meta xlMetaV1, quorumModTime t
 		return true
 	}
 	if xlErr == nil {
-		// If xl.json was read fine but there is some problem with the part.N files.
-		if dataErr == errFileNotFound {
+		// If xl.json was read fine but there may be problem with the part.N files.
+		if IsErr(dataErr, []error{
+			errFileNotFound,
+			errFileCorrupt,
+		}...) {
 			return true
 		}
-		if _, ok := dataErr.(hashMismatchError); ok {
-			return true
-		}
-		if quorumModTime != meta.Stat.ModTime {
+		if !quorumModTime.Equal(meta.Stat.ModTime) {
 			return true
 		}
 	}
@@ -351,7 +351,7 @@ func (xl xlObjects) healObject(ctx context.Context, bucket string, object string
 	}
 
 	// Reorder so that we have data disks first and parity disks next.
-	latestDisks = shuffleDisks(latestDisks, latestMeta.Erasure.Distribution)
+	latestDisks = shuffleDisks(availableDisks, latestMeta.Erasure.Distribution)
 	outDatedDisks = shuffleDisks(outDatedDisks, latestMeta.Erasure.Distribution)
 	partsMetadata = shufflePartsMetadata(partsMetadata, latestMeta.Erasure.Distribution)
 	for i := range outDatedDisks {
@@ -498,10 +498,14 @@ func (xl xlObjects) healObjectDir(ctx context.Context, bucket, object string, dr
 			drive = storageDisks[i].String()
 		}
 		switch err {
+		case nil:
+			hr.Before.Drives[i] = madmin.HealDriveInfo{State: madmin.DriveStateOk}
+			hr.After.Drives[i] = madmin.HealDriveInfo{State: madmin.DriveStateOk}
 		case errDiskNotFound:
 			hr.Before.Drives[i] = madmin.HealDriveInfo{State: madmin.DriveStateOffline}
 			hr.After.Drives[i] = madmin.HealDriveInfo{State: madmin.DriveStateOffline}
-		case errVolumeNotFound:
+		case errVolumeNotFound, errFileNotFound:
+			// Bucket or prefix/directory not found
 			hr.Before.Drives[i] = madmin.HealDriveInfo{Endpoint: drive, State: madmin.DriveStateMissing}
 			hr.After.Drives[i] = madmin.HealDriveInfo{Endpoint: drive, State: madmin.DriveStateMissing}
 		default:
@@ -514,7 +518,8 @@ func (xl xlObjects) healObjectDir(ctx context.Context, bucket, object string, dr
 	}
 	for i, err := range errs {
 		switch err {
-		case errVolumeNotFound:
+		case errVolumeNotFound, errFileNotFound:
+			// Bucket or prefix/directory not found
 			merr := storageDisks[i].MakeVol(pathJoin(bucket, object))
 			switch merr {
 			case nil, errVolumeExists:
@@ -689,7 +694,7 @@ func (xl xlObjects) HealObject(ctx context.Context, bucket, object string, dryRu
 	healCtx := logger.SetReqInfo(context.Background(), newReqInfo)
 
 	// Healing directories handle it separately.
-	if hasSuffix(object, slashSeparator) {
+	if hasSuffix(object, SlashSeparator) {
 		return xl.healObjectDir(healCtx, bucket, object, dryRun)
 	}
 
@@ -717,7 +722,7 @@ func (xl xlObjects) HealObject(ctx context.Context, bucket, object string, dryRu
 	}
 
 	// Lock the object before healing.
-	objectLock := xl.nsMutex.NewNSLock(bucket, object)
+	objectLock := xl.nsMutex.NewNSLock(ctx, bucket, object)
 	if lerr := objectLock.GetRLock(globalHealingTimeout); lerr != nil {
 		return defaultHealResult(latestXLMeta, storageDisks, errs, bucket, object), lerr
 	}

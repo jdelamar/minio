@@ -17,20 +17,16 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
+	"encoding/gob"
+	"encoding/hex"
 	"io"
 	"io/ioutil"
-	"net"
 	"net/url"
 	"path"
 	"strconv"
-
-	"encoding/gob"
-	"encoding/hex"
-
-	"fmt"
-	"strings"
 
 	"github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/rest"
@@ -44,32 +40,10 @@ func isNetworkError(err error) bool {
 	if err.Error() == errConnectionStale.Error() {
 		return true
 	}
-	if strings.Contains(err.Error(), "connection reset by peer") {
-		return true
+	if nerr, ok := err.(*rest.NetworkError); ok {
+		return xnet.IsNetworkOrHostDown(nerr.Err)
 	}
-	if uerr, isURLError := err.(*url.Error); isURLError {
-		if uerr.Timeout() {
-			return true
-		}
-
-		err = uerr.Err
-	}
-
-	_, isNetOpError := err.(*net.OpError)
-	return isNetOpError
-}
-
-// Attempt to approximate network error with a
-// typed network error, otherwise default to
-// errDiskNotFound
-func toNetworkError(err error) error {
-	if err == nil {
-		return err
-	}
-	if strings.Contains(err.Error(), "connection reset by peer") {
-		return errNetworkConnReset
-	}
-	return errDiskNotFound
+	return false
 }
 
 // Converts rpc.ServerError to underlying error. This function is
@@ -81,14 +55,14 @@ func toStorageErr(err error) error {
 	}
 
 	if isNetworkError(err) {
-		return toNetworkError(err)
+		return errDiskNotFound
 	}
 
 	switch err.Error() {
-	case io.EOF.Error():
-		return io.EOF
-	case io.ErrUnexpectedEOF.Error():
-		return io.ErrUnexpectedEOF
+	case errFaultyDisk.Error():
+		return errFaultyDisk
+	case errFileCorrupt.Error():
+		return errFileCorrupt
 	case errUnexpected.Error():
 		return errUnexpected
 	case errDiskFull.Error():
@@ -121,15 +95,10 @@ func toStorageErr(err error) error {
 		return errRPCAPIVersionUnsupported
 	case errServerTimeMismatch.Error():
 		return errServerTimeMismatch
-	}
-	if strings.Contains(err.Error(), "Bitrot verification mismatch") {
-		var expected string
-		var received string
-		fmt.Sscanf(err.Error(), "Bitrot verification mismatch - expected %s received %s", &expected, &received)
-		// Go's Sscanf %s scans "," that comes after the expected hash, hence remove it. Providing "," in the format string does not help.
-		expected = strings.TrimSuffix(expected, ",")
-		bitrotErr := hashMismatchError{expected, received}
-		return bitrotErr
+	case io.EOF.Error():
+		return io.EOF
+	case io.ErrUnexpectedEOF.Error():
+		return io.ErrUnexpectedEOF
 	}
 	return err
 }
@@ -256,11 +225,10 @@ func (client *storageRESTClient) CreateFile(volume, path string, length int64, r
 }
 
 // WriteAll - write all data to a file.
-func (client *storageRESTClient) WriteAll(volume, path string, buffer []byte) error {
+func (client *storageRESTClient) WriteAll(volume, path string, reader io.Reader) error {
 	values := make(url.Values)
 	values.Set(storageRESTVolume, volume)
 	values.Set(storageRESTFilePath, path)
-	reader := bytes.NewBuffer(buffer)
 	respBody, err := client.call(storageRESTMethodWriteAll, values, reader, -1)
 	defer http.DrainBody(respBody)
 	return err
@@ -330,6 +298,43 @@ func (client *storageRESTClient) ReadFile(volume, path string, offset int64, buf
 	return int64(n), err
 }
 
+func (client *storageRESTClient) Walk(volume, dirPath, marker string, recursive bool, leafFile string,
+	readMetadataFn readMetadataFunc, endWalkCh chan struct{}) (chan FileInfo, error) {
+	values := make(url.Values)
+	values.Set(storageRESTVolume, volume)
+	values.Set(storageRESTDirPath, dirPath)
+	values.Set(storageRESTMarkerPath, marker)
+	values.Set(storageRESTRecursive, strconv.FormatBool(recursive))
+	values.Set(storageRESTLeafFile, leafFile)
+	respBody, err := client.call(storageRESTMethodWalk, values, nil, -1)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan FileInfo)
+	go func() {
+		defer close(ch)
+		defer http.DrainBody(respBody)
+
+		decoder := gob.NewDecoder(respBody)
+		for {
+			var fi FileInfo
+			if gerr := decoder.Decode(&fi); gerr != nil {
+				// Upon error return
+				return
+			}
+			select {
+			case ch <- fi:
+			case <-endWalkCh:
+				return
+			}
+
+		}
+	}()
+
+	return ch, nil
+}
+
 // ListDir - lists a directory.
 func (client *storageRESTClient) ListDir(volume, dirPath string, count int, leafFile string) (entries []string, err error) {
 	values := make(url.Values)
@@ -354,6 +359,35 @@ func (client *storageRESTClient) DeleteFile(volume, path string) error {
 	respBody, err := client.call(storageRESTMethodDeleteFile, values, nil, -1)
 	defer http.DrainBody(respBody)
 	return err
+}
+
+// DeleteFileBulk - deletes files in bulk.
+func (client *storageRESTClient) DeleteFileBulk(volume string, paths []string) (errs []error, err error) {
+	if len(paths) == 0 {
+		return errs, err
+	}
+	values := make(url.Values)
+	values.Set(storageRESTVolume, volume)
+	for _, path := range paths {
+		values.Add(storageRESTFilePath, path)
+	}
+	respBody, err := client.call(storageRESTMethodDeleteFileBulk, values, nil, -1)
+	defer http.DrainBody(respBody)
+
+	if err != nil {
+		return nil, err
+	}
+
+	dErrResp := &DeleteFileBulkErrsResp{}
+	if err = gob.NewDecoder(respBody).Decode(dErrResp); err != nil {
+		return nil, err
+	}
+
+	for _, dErr := range dErrResp.Errs {
+		errs = append(errs, toStorageErr(dErr))
+	}
+
+	return errs, nil
 }
 
 // RenameFile - renames a file.
@@ -390,6 +424,38 @@ func (client *storageRESTClient) getInstanceID() (err error) {
 	}
 	client.instanceID = string(instanceIDBuf[:n])
 	return nil
+}
+
+func (client *storageRESTClient) VerifyFile(volume, path string, size int64, algo BitrotAlgorithm, sum []byte, shardSize int64) error {
+	values := make(url.Values)
+	values.Set(storageRESTVolume, volume)
+	values.Set(storageRESTFilePath, path)
+	values.Set(storageRESTBitrotAlgo, algo.String())
+	values.Set(storageRESTLength, strconv.FormatInt(size, 10))
+	values.Set(storageRESTShardSize, strconv.Itoa(int(shardSize)))
+	values.Set(storageRESTBitrotHash, hex.EncodeToString(sum))
+
+	respBody, err := client.call(storageRESTMethodVerifyFile, values, nil, -1)
+	defer http.DrainBody(respBody)
+	if err != nil {
+		return err
+	}
+	reader := bufio.NewReader(respBody)
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return err
+		}
+		if b != ' ' {
+			reader.UnreadByte()
+			break
+		}
+	}
+	verifyResp := &VerifyFileResp{}
+	if err = gob.NewDecoder(reader).Decode(verifyResp); err != nil {
+		return err
+	}
+	return toStorageErr(verifyResp.Err)
 }
 
 // Close - marks the client as closed.
