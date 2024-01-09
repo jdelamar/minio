@@ -92,6 +92,6 @@
     "reselect": "^3.0.1",
     "superagent": "^3.8.2",
     "superagent-es6-promise": "^1.0.0",
-    "webpack": "^4.28.3"
+    "webpack": "^5.1.1"
   }
 }
